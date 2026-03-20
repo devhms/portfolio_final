@@ -20,7 +20,7 @@ const overview = (
       </p>
       <p style={{ color: "var(--t2)", fontSize: "0.875rem", lineHeight: 1.7, margin: 0 }}>
         For learners in Pakistan and other regions with variable internet and real privacy concerns, this model is a
-        barrier. زبان (Zuban — Urdu for "tongue") eliminates it by running inference entirely on-device.
+        barrier. زبان (Zuban — Urdu for &quot;tongue&quot;) eliminates it by running inference entirely on-device.
       </p>
     </div>
 
@@ -28,7 +28,7 @@ const overview = (
       <div className="section-label">Architecture</div>
       <Callout label="Key Decision">
         Ollama for local inference — not a fine-tuned model, not a serverless edge function.
-        The user's data never touches a third-party server. Per-token cost: zero. Latency: local network only.
+        The user&apos;s data never touches a third-party server. Per-token cost: zero. Latency: local network only.
       </Callout>
       <div className="flow-diagram" style={{ marginTop: "0.875rem" }}>
         {`User message

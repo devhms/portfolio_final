@@ -131,7 +131,7 @@ export default function BentoGrid() {
           <span style={{ color: "var(--t3)", paddingLeft: "1rem" }}>
             status:{" "}
           </span>
-          <span style={{ color: "var(--green)" }}>"open-to-work"</span>
+          <span style={{ color: "var(--green)" }}>&quot;open-to-work&quot;</span>
           <br />
           <span style={{ color: "var(--t3)" }}>{"}"}</span>
         </div>
@@ -187,7 +187,7 @@ export default function BentoGrid() {
             paddingLeft: "0.75rem",
           }}
         >
-          "Discipline equals freedom."
+          &quot;Discipline equals freedom.&quot;
         </blockquote>
         <p style={{ fontSize: "0.75rem", color: "var(--t3)", margin: 0 }}>
           Ship first. Polish after.

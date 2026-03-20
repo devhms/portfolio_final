@@ -152,8 +152,8 @@ export default function ContactPage() {
             fontFamily: "var(--font-geist-mono), monospace",
           }}
         >
-          <span style={{ color: "var(--acc)" }}>// </span>
-          Ship first. Polish after. Own the problem, not the code.
+          <span style={{ color: "var(--acc)" }}>{'// '}</span>
+          {' Ship first. Polish after. Own the problem, not the code.'}
         </div>
       </div>
     </>
