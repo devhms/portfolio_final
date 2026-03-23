@@ -344,6 +344,17 @@ export default function TerminalEmulator() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [state.lines, welcomeLines]);
 
+  // ── Keyboard Auto-scroll via visualViewport ───────────────────────────────
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const handleResize = () => {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    };
+    vv.addEventListener("resize", handleResize);
+    return () => vv.removeEventListener("resize", handleResize);
+  }, []);
+
   // ── Konami Code ───────────────────────────────────────────────────────────
   const KONAMI = [
     "ArrowUp","ArrowUp","ArrowDown","ArrowDown",
@@ -1013,7 +1024,9 @@ export default function TerminalEmulator() {
           margin: 0 auto;
           display: flex;
           flex-direction: column;
-          height: 520px;
+          height: calc(100dvh - 8rem);
+          max-height: 520px;
+          min-height: 350px;
           user-select: text;
         }
 
@@ -1202,7 +1215,7 @@ export default function TerminalEmulator() {
               onKeyDown={handleKeyDown}
               autoComplete="off"
               autoCorrect="off"
-              autoCapitalize="off"
+              autoCapitalize="none"
               spellCheck={false}
               aria-label="Terminal input"
               style={{
@@ -1211,6 +1224,7 @@ export default function TerminalEmulator() {
                 width: 0,
                 height: 0,
                 pointerEvents: "none",
+                fontSize: "16px",
               }}
             />
           </div>
