@@ -23,6 +23,7 @@ function BentoCard({
     textDecoration: "none",
     color: "inherit",
     minHeight: 120,
+    overflow: "hidden" as const,
   };
 
   if (href) {
@@ -40,7 +41,7 @@ export default function BentoGrid() {
     <div className="grid grid-cols-1 md:grid-cols-12 gap-4" style={{ marginTop: "3rem" }}>
       {/* Projects — 2 per row on large */}
       {projects.map((p, i) => (
-        <BentoCard key={p.id} href={p.href} className={i < 2 ? "md:col-span-6" : "md:col-span-4"}>
+        <BentoCard key={p.id} href={p.href} className={i < 2 ? "col-span-full md:col-span-6" : "col-span-full md:col-span-4"}>
           <div
             style={{
               display: "flex",
@@ -104,7 +105,7 @@ export default function BentoGrid() {
       ))}
 
       {/* About card */}
-      <BentoCard href="/about" className="md:col-span-4">
+      <BentoCard href="/about" className="col-span-full md:col-span-4">
         <div
           style={{
             fontSize: "0.6875rem",
@@ -137,7 +138,7 @@ export default function BentoGrid() {
       </BentoCard>
 
       {/* Terminal card */}
-      <BentoCard href="/terminal" className="md:col-span-4">
+      <BentoCard href="/terminal" className="col-span-full md:col-span-4">
         <div
           style={{
             fontSize: "0.6875rem",
@@ -164,7 +165,7 @@ export default function BentoGrid() {
       </BentoCard>
 
       {/* Philosophy card */}
-      <BentoCard className="md:col-span-4">
+      <BentoCard className="col-span-full md:col-span-4">
         <div
           style={{
             fontSize: "0.6875rem",
