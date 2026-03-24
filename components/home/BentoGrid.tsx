@@ -5,17 +5,13 @@ import { projects } from "@/lib/projects";
 function BentoCard({
   children,
   href,
-  cols = 6,
-  rows = 1,
+  className = "",
 }: {
   children: React.ReactNode;
   href?: string;
-  cols?: number;
-  rows?: number;
+  className?: string;
 }) {
   const style = {
-    gridColumn: `span ${cols}`,
-    gridRow: `span ${rows}`,
     background: "var(--bg2)",
     border: "1px solid var(--b1)",
     borderRadius: "10px",
@@ -31,20 +27,20 @@ function BentoCard({
 
   if (href) {
     return (
-      <Link href={href} style={style}>
+      <Link href={href} style={style} className={`bento-card ${className}`}>
         {children}
       </Link>
     );
   }
-  return <div style={style}>{children}</div>;
+  return <div style={style} className={`bento-card ${className}`}>{children}</div>;
 }
 
 export default function BentoGrid() {
   return (
-    <div className="bento-grid" style={{ marginTop: "3rem" }}>
+    <div className="grid grid-cols-1 md:grid-cols-12 gap-4" style={{ marginTop: "3rem" }}>
       {/* Projects — 2 per row on large */}
       {projects.map((p, i) => (
-        <BentoCard key={p.id} href={p.href} cols={i < 2 ? 6 : 4}>
+        <BentoCard key={p.id} href={p.href} className={i < 2 ? "md:col-span-6" : "md:col-span-4"}>
           <div
             style={{
               display: "flex",
@@ -54,6 +50,7 @@ export default function BentoGrid() {
             }}
           >
             <h3
+              className="bento-title"
               style={{
                 fontSize: "0.9375rem",
                 fontFamily: "var(--font-geist-mono), monospace",
@@ -67,6 +64,7 @@ export default function BentoGrid() {
             <Badge status={p.status} />
           </div>
           <p
+            className="bento-desc"
             style={{
               fontSize: "0.8125rem",
               color: "var(--t2)",
@@ -87,6 +85,7 @@ export default function BentoGrid() {
             {p.stack.slice(0, 3).map((tech) => (
               <span
                 key={tech}
+                className="bento-tag"
                 style={{
                   fontSize: "0.6875rem",
                   color: "var(--t3)",
@@ -105,7 +104,7 @@ export default function BentoGrid() {
       ))}
 
       {/* About card */}
-      <BentoCard href="/about" cols={4}>
+      <BentoCard href="/about" className="md:col-span-4">
         <div
           style={{
             fontSize: "0.6875rem",
@@ -138,7 +137,7 @@ export default function BentoGrid() {
       </BentoCard>
 
       {/* Terminal card */}
-      <BentoCard href="/terminal" cols={4}>
+      <BentoCard href="/terminal" className="md:col-span-4">
         <div
           style={{
             fontSize: "0.6875rem",
@@ -165,7 +164,7 @@ export default function BentoGrid() {
       </BentoCard>
 
       {/* Philosophy card */}
-      <BentoCard cols={4}>
+      <BentoCard className="md:col-span-4">
         <div
           style={{
             fontSize: "0.6875rem",

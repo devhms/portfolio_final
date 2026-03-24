@@ -132,9 +132,8 @@ export default function TerminalEmulator() {
   const outputRef    = useRef<HTMLDivElement>(null);
   const bottomRef    = useRef<HTMLDivElement>(null);
 
-  // Gesture tracking — useRef to avoid re-renders during active touch
-  const touchStartRef = useRef<TouchTrack | null>(null);
-  const rafRef        = useRef<number>(0);
+  const touchStartY = useRef<number>(0);
+  const touchMoved  = useRef<boolean>(false);
 
   // State
   const [lines, setLines]           = useState<TerminalLine[]>([
@@ -162,17 +161,13 @@ export default function TerminalEmulator() {
     const vv = window.visualViewport;
     if (!vv) return;
 
-    const onVVResize = () => {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = requestAnimationFrame(() => {
-        bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      });
+    const handleResize = () => {
+      bottomRef.current?.scrollIntoView({ block: "nearest" });
     };
 
-    vv.addEventListener("resize", onVVResize);
+    vv.addEventListener("resize", handleResize);
     return () => {
-      vv.removeEventListener("resize", onVVResize);
-      cancelAnimationFrame(rafRef.current);
+      vv.removeEventListener("resize", handleResize);
     };
   }, []);
 
@@ -257,41 +252,22 @@ export default function TerminalEmulator() {
   }, [inputValue, history, execCommand, flushAria]);
 
   // ── LAYER 3 — Time-Delta Discriminator (tap vs scroll) ───────────────────
-  //
-  // CSS touch-action:pan-y (applied below) delegates vertical scrolling to the
-  // browser compositor — the browser fires pointercancel on scroll gestures,
-  // preventing the click event from ever reaching JS. This handles clean swipes.
-  //
-  // The Time-Delta Discriminator handles "sloppy taps" — micro-drift events
-  // that don't breach the browser's native scroll threshold but should not
-  // trigger keyboard focus. If deltaY < 8px AND deltaT < 250ms → genuine tap.
-  //
-  // Using Touch Events (not Pointer Events Level 4) because Safari/WebKit has
-  // not implemented persistentDeviceId (confirmed absent as of iOS 26.3.1).
+  // Updated tracking pattern to track Y-delta cleanly
   const onTouchStart = useCallback((e: React.TouchEvent) => {
-    touchStartRef.current = {
-      y:    e.touches[0].clientY,
-      time: Date.now(),
-    };
+    touchStartY.current = e.touches[0].clientY;
+    touchMoved.current  = false;
   }, []);
 
-  const onTouchEnd = useCallback((e: React.TouchEvent) => {
-    const start = touchStartRef.current;
-    if (!start) return;
-
-    const deltaY = Math.abs(e.changedTouches[0].clientY - start.y);
-    const deltaT = Date.now() - start.time;
-    const isTap  = deltaY < SWIPE_THRESHOLD_PX && deltaT < SWIPE_DURATION_MS;
-
-    if (isTap) {
-      // e.preventDefault() eliminates the 300ms synthetic ghost-click delay
-      // baked into mobile Safari for touch-to-click translation.
-      e.preventDefault();
-      inputRef.current?.focus();
+  const onTouchMove = useCallback((e: React.TouchEvent) => {
+    if (Math.abs(e.touches[0].clientY - touchStartY.current) > 8) {
+      touchMoved.current = true; // user is scrolling
     }
-    // Scroll gesture → do nothing. CSS touch-action:pan-y already owns it.
+  }, []);
 
-    touchStartRef.current = null;
+  const onTouchEnd = useCallback(() => {
+    if (!touchMoved.current) {
+      inputRef.current?.focus(); // only focus on genuine tap
+    }
   }, []);
 
   // Desktop click — guard against double-firing on touch devices
@@ -355,6 +331,7 @@ export default function TerminalEmulator() {
         role="application"
         aria-label="Interactive terminal emulator. Type commands and press Enter."
         onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
         onClick={onDesktopClick}
         style={{
@@ -368,7 +345,7 @@ export default function TerminalEmulator() {
            * min-height: prevents collapse on keyboards that dominate small screens.
            * max-height: preserves the design aesthetic on large viewports.
            */
-          height:    "calc(100vh - 12rem)",
+          height:    "calc(var(--terminal-offset, 12rem) * -1 + 100vh)",
           minHeight: 350,
           maxHeight: 520,
 
@@ -586,7 +563,7 @@ export default function TerminalEmulator() {
            * !important ensures the dvh value wins over the inline style.
            */
           .term-root {
-            height:    calc(100dvh - 12rem) !important;
+            height:    calc(var(--terminal-offset, 12rem) * -1 + 100dvh) !important;
             min-height: 350px;
             max-height: 520px;
           }

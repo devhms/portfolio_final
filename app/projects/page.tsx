@@ -79,6 +79,7 @@ export default function ProjectsPage() {
               {p.stack.map((tech) => (
                 <span
                   key={tech}
+                  className="bento-tag"
                   style={{
                     fontSize: "0.6875rem",
                     color: "var(--t3)",

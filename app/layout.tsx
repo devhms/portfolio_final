@@ -14,14 +14,15 @@ export const metadata: Metadata = siteMetadata;
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  maximumScale: 5,
+  userScalable: true,
   interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning className={`${GeistSans.variable} ${GeistMono.variable}`}>
-      <body>
+      <body className="overflow-x-hidden">
         <Providers>
           <div className="grain" aria-hidden="true" />
           <div className="aurora" aria-hidden="true">
