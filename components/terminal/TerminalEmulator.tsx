@@ -33,22 +33,11 @@ interface TerminalLine {
   ts: number;
 }
 
-interface TouchTrack {
-  y: number;
-  time: number;
-}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-/**
- * Time-Delta Discriminator thresholds.
- * Source: §"Time-Delta Discriminator Logic", 2026 Mobile Terminal Spec.
- *
- * SWIPE_THRESHOLD_PX — max Euclidean Y-drift before tap is reclassified as scroll
- * SWIPE_DURATION_MS  — max contact duration before tap is reclassified as long-press
- */
-const SWIPE_THRESHOLD_PX = 8;
-const SWIPE_DURATION_MS  = 250;
+
+
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -141,7 +130,7 @@ export default function TerminalEmulator() {
   ]);
   const [inputValue, setInputValue] = useState("");
   const [history, setHistory]       = useState<string[]>([]);
-  const [histIdx, setHistIdx]       = useState(-1);
+  const [, setHistIdx]              = useState(-1);
   const [isFocused, setIsFocused]   = useState(false);
 
   const { ariaText, flush: flushAria } = useAriaQueue();
@@ -421,7 +410,8 @@ export default function TerminalEmulator() {
              * Without this the scroll decelerates abruptly (no inertia),
              * feeling robotic on iPhones compared to native apps.
              */
-            WebkitOverflowScrolling: "touch" as any,
+            WebkitOverflowScrolling: "touch" as "auto" | "touch",
+
 
             /*
              * Prevent scroll chaining: reaching the top/bottom of terminal
