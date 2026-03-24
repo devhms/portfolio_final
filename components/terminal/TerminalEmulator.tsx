@@ -353,6 +353,8 @@ export default function TerminalEmulator() {
            * The rest of the touch-suppression matrix is in the <style> block.
            */
           WebkitTapHighlightColor: "transparent",
+          direction:      "ltr",
+          textAlign:      "left",
         }}
       >
         {/* ── Title bar ─────────────────────────────────────────────── */}
@@ -439,6 +441,8 @@ export default function TerminalEmulator() {
                 // Per LAYER 6: re-enable text selection on output lines only
                 userSelect:       "text",
                 WebkitUserSelect: "text",
+                direction:        "ltr",
+                textAlign:        "left",
               }}
             >
               {l.content}
@@ -450,7 +454,7 @@ export default function TerminalEmulator() {
             <span style={{ color: "#00FF9C", fontFamily: "inherit", fontSize: 13, marginRight: 6, flexShrink: 0 }}>
               $
             </span>
-            <span style={{ fontSize: 13, fontFamily: "inherit", color: "#fff", wordBreak: "break-all", flex: 1 }}>
+            <span style={{ fontSize: 13, fontFamily: "inherit", color: "#fff", wordBreak: "break-all", flex: 1, direction: "ltr", textAlign: "left" }}>
               {inputValue}
             </span>
             <span
@@ -536,6 +540,8 @@ export default function TerminalEmulator() {
             // Scale to nothing without changing computed font-size
             transform:       "scale(0)",
             transformOrigin: "top left",
+            direction:       "ltr",
+            textAlign:       "left",
           }}
         />
 
