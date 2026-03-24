@@ -1,611 +1,1242 @@
 "use client";
 
-/**
- * TerminalEmulator.tsx — 2026 Mobile UX/UI Hardened Build
- *
- * Implements all architectural layers from the 2026 specification:
- *
- *  LAYER 0 — viewport meta (layout.tsx) → maximumScale:1, interactiveWidget:'resizes-content'
- *  LAYER 1 — DVH height  → calc(100dvh - 12rem) with vh fallback, min/max constraints
- *  LAYER 2 — Input layer → font-size:16px (iOS zoom bypass), autoCapitalize:"none", inputMode:"text"
- *  LAYER 3 — Pointer Events L4 + Time-Delta Discriminator (tap vs scroll, 8px/250ms thresholds)
- *  LAYER 4 — rAF-debounced visualViewport resize → bottomRef auto-scroll
- *  LAYER 5 — iOS 26 Liquid Glass offsetTop regression guard (focusout micro-scroll nudge)
- *  LAYER 6 — CSS touch suppression matrix (tap-highlight, touch-action, overscroll, user-select)
- *  LAYER 7 — ARIA live region (assertive + atomic, pre-mounted, xterm.js-style queue flush)
- *  LAYER 8 — overflow-anchor:auto for stdout stream stabilization
- */
-
 import React, {
+  useEffect,
+  useReducer,
   useRef,
   useState,
-  useEffect,
   useCallback,
-  KeyboardEvent,
+  memo,
 } from "react";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ── Next.js Router & Themes ──────────────────────────────────────────────────
+import { useRouter } from "next/navigation";
+import { useTheme } from "next-themes";
+// ─────────────────────────────────────────────────────────────────────────────
 
-interface TerminalLine {
+// ══════════════════════════════════════════════════════════════════════════════
+//  TYPES
+// ══════════════════════════════════════════════════════════════════════════════
+
+type Segment = { text: string; color?: string };
+type OutputLine = string | Segment[];
+
+interface Line {
   id: string;
-  type: "input" | "output" | "error" | "system";
-  content: string;
-  ts: number;
+  type: "input" | "output" | "error";
+  segments: Segment[];
 }
 
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-
-
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-
-const line = (content: string, type: TerminalLine["type"] = "output"): TerminalLine =>
-  ({ id: uid(), type, content, ts: Date.now() });
-
-// ─── ARIA Queue Hook ──────────────────────────────────────────────────────────
-
-/**
- * Mirrors xterm.js ARIA queue behaviour:
- * - Flushes full, complete output text into the live region on command completion.
- * - Wipes state first so identical outputs still trigger a fresh announcement.
- * - Uses rAF so the DOM mutation happens in the next paint frame, giving
- *   VoiceOver / TalkBack time to register the wipe before the refill.
- */
-function useAriaQueue() {
-  const [ariaText, setAriaText] = useState("");
-
-  const flush = useCallback((text: string) => {
-    setAriaText("");
-    requestAnimationFrame(() => setAriaText(text));
-  }, []);
-
-  return { ariaText, flush };
+interface State {
+  lines: Line[];
+  history: string[];
+  historyIdx: number;
 }
 
-// ─── Command Processor ───────────────────────────────────────────────────────
+type Action =
+  | { type: "PUSH"; line: Line }
+  | { type: "PUSH_MANY"; lines: Line[] }
+  | { type: "CLEAR" }
+  | { type: "LOAD_HISTORY"; history: string[] }
+  | { type: "ADD_HISTORY"; cmd: string };
 
-function runCommand(
-  cmd: string,
-  prev: TerminalLine[]
-): { next: TerminalLine[]; aria: string } {
-  const trimmed = cmd.trim().toLowerCase();
-  const echo    = line(`$ ${cmd}`, "input");
+// ══════════════════════════════════════════════════════════════════════════════
+//  UTILS
+// ══════════════════════════════════════════════════════════════════════════════
 
-  if (!trimmed) return { next: [...prev, echo], aria: "" };
+let _id = 0;
+const uid = () => `l${++_id}`;
 
-  switch (trimmed) {
-    case "help": {
-      const out = "Commands: help · about · projects · skills · contact · clear";
-      return { next: [...prev, echo, line(out)], aria: out };
-    }
-    case "about": {
-      const out = "Ibrahim — SE @ UET Taxila. Builder. IJT Nazim. Discipline equals freedom.";
-      return { next: [...prev, echo, line(out)], aria: out };
-    }
-    case "projects": {
-      const out = [
-        "B.L.A.S.T.     — PSX real-time stock data pipeline",
-        "Dawn Scraper   — Python/BS4 news aggregator",
-        "Zuban          — Language learning app",
-        "Capital Suite  — Java banking capstone",
-      ].join("\n");
-      return { next: [...prev, echo, line(out)], aria: "4 projects listed." };
-    }
-    case "skills": {
-      const out = "Python · TypeScript · Java · Next.js · LangChain · Three.js · GSAP · Ollama";
-      return { next: [...prev, echo, line(out)], aria: out };
-    }
-    case "contact": {
-      const out = "github.com/devhms  ·  portfolio1-bice-alpha.vercel.app";
-      return { next: [...prev, echo, line(out)], aria: out };
-    }
-    case "clear":
-      return { next: [], aria: "Terminal cleared." };
-    default: {
-      const out = `bash: ${cmd}: command not found — type 'help'`;
-      return { next: [...prev, echo, line(out, "error")], aria: out };
-    }
+function toSegments(line: OutputLine): Segment[] {
+  if (typeof line === "string") return [{ text: line }];
+  return line;
+}
+
+function makeLine(
+  type: Line["type"],
+  content: OutputLine
+): Line {
+  return { id: uid(), type, segments: toSegments(content) };
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  REDUCER
+// ══════════════════════════════════════════════════════════════════════════════
+
+const MAX_HISTORY = 1000;
+const MAX_LINES = 2000;
+
+function reducer(state: State, action: Action): State {
+  switch (action.type) {
+    case "PUSH":
+      return {
+        ...state,
+        lines: [...state.lines, action.line].slice(-MAX_LINES),
+      };
+    case "PUSH_MANY":
+      return {
+        ...state,
+        lines: [...state.lines, ...action.lines].slice(-MAX_LINES),
+      };
+    case "CLEAR":
+      return { ...state, lines: [] };
+    case "LOAD_HISTORY":
+      return { ...state, history: action.history, historyIdx: -1 };
+    case "ADD_HISTORY":
+      if (!action.cmd.trim() || state.history[0] === action.cmd)
+        return { ...state, historyIdx: -1 };
+      return {
+        ...state,
+        history: [action.cmd, ...state.history].slice(0, MAX_HISTORY),
+        historyIdx: -1,
+      };
+    default:
+      return state;
   }
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+const initialState: State = {
+  lines: [],
+  history: [],
+  historyIdx: -1,
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  COMMAND LIST  (for autocomplete / ghost)
+// ══════════════════════════════════════════════════════════════════════════════
+
+const CMD_LIST = [
+  "whoami",
+  "ls",
+  "ls projects/",
+  "git log --oneline -5",
+  "cat contact.txt",
+  "cat README.md",
+  "neofetch",
+  "skills",
+  "pwd",
+  "date",
+  "theme dark",
+  "theme light",
+  "theme system",
+  "open blast",
+  "open dawn",
+  "open zuban",
+  "open capital",
+  "open about",
+  "open contact",
+  "open uses",
+  "open projects",
+  "open home",
+  "sudo",
+  "matrix",
+  "clear",
+  "help",
+  "history",
+];
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  AUTOCOMPLETE
+// ══════════════════════════════════════════════════════════════════════════════
+
+function ghostSuggestion(partial: string): string {
+  if (!partial) return "";
+  const match = CMD_LIST.find(
+    (c) => c.startsWith(partial) && c !== partial
+  );
+  return match ? match.slice(partial.length) : "";
+}
+
+function autocomplete(partial: string): string {
+  if (!partial) return partial;
+  const matches = CMD_LIST.filter((c) => c.startsWith(partial));
+  if (matches.length === 0) return partial;
+  if (matches.length === 1) return matches[0];
+  let prefix = matches[0];
+  for (const m of matches) {
+    while (!m.startsWith(prefix)) prefix = prefix.slice(0, -1);
+  }
+  return prefix.length > partial.length ? prefix : partial;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  TYPEWRITER HOOK
+// ══════════════════════════════════════════════════════════════════════════════
+
+const WELCOME_LINES = [
+  'Portfolio Terminal v2.0 — type "help" to get started.',
+  "Press Tab to autocomplete · ↑↓ navigate history · Ctrl+L clear",
+];
+
+function useTypewriter(lines: string[], charDelay = 20) {
+  const [displayed, setDisplayed] = useState<string[]>([]);
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    let li = 0,
+      ci = 0;
+    const built: string[] = [];
+
+    const tick = () => {
+      if (li >= lines.length) {
+        setDone(true);
+        return;
+      }
+      ci++;
+      setDisplayed([...built, lines[li].slice(0, ci)]);
+      if (ci >= lines[li].length) {
+        built.push(lines[li]);
+        li++;
+        ci = 0;
+        setTimeout(tick, charDelay * 5);
+      } else {
+        setTimeout(tick, charDelay);
+      }
+    };
+    const timer = setTimeout(tick, 350);
+    return () => clearTimeout(timer);
+  }, [lines, charDelay]);
+
+  return { displayed, done };
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SYS INFO HOOK  (Tier 3.4)
+// ══════════════════════════════════════════════════════════════════════════════
+
+interface SysInfo {
+  cores: number;
+  memory: string;
+  timezone: string;
+  resolution: string;
+  platform: string;
+  browser: string;
+}
+
+function useSysInfo(): SysInfo {
+  const [info, setInfo] = useState<SysInfo>({
+    cores: 0,
+    memory: "unknown",
+    timezone: "unknown",
+    resolution: "unknown",
+    platform: "unknown",
+    browser: "unknown",
+  });
+
+  useEffect(() => {
+    const ua = navigator.userAgent;
+    setInfo({
+      cores: navigator.hardwareConcurrency ?? 0,
+      memory:
+        (navigator as { deviceMemory?: number }).deviceMemory != null
+          ? `${(navigator as { deviceMemory?: number }).deviceMemory}GB`
+          : "undisclosed",
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      resolution: `${window.screen.width}×${window.screen.height}`,
+      platform: ua.includes("Mac")
+        ? "macOS"
+        : ua.includes("Win")
+        ? "Windows"
+        : ua.includes("Linux")
+        ? "Linux"
+        : ua.includes("Android")
+        ? "Android"
+        : ua.includes("iPhone") || ua.includes("iPad")
+        ? "iOS"
+        : "Unknown",
+      browser: ua.includes("Firefox")
+        ? "Firefox"
+        : ua.includes("Edg")
+        ? "Edge"
+        : ua.includes("Chrome")
+        ? "Chrome"
+        : ua.includes("Safari")
+        ? "Safari"
+        : "Unknown",
+    });
+  }, []);
+
+  return info;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  OUTPUT LINE (memoised)
+// ══════════════════════════════════════════════════════════════════════════════
+
+const OutputRow = memo(function OutputRow({ line }: { line: Line }) {
+  return (
+    <div
+      style={{
+        lineHeight: 1.65,
+        wordBreak: "break-all",
+        color:
+          line.type === "error"
+            ? "var(--term-red)"
+            : line.type === "input"
+            ? "var(--term-t1)"
+            : "var(--term-t2)",
+      }}
+    >
+      {line.segments.map((seg, i) => (
+        <span key={i} style={{ color: seg.color }}>
+          {seg.text}
+        </span>
+      ))}
+    </div>
+  );
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MAIN COMPONENT
+// ══════════════════════════════════════════════════════════════════════════════
 
 export default function TerminalEmulator() {
-  // DOM refs
-  const inputRef     = useRef<HTMLInputElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const outputRef    = useRef<HTMLDivElement>(null);
-  const bottomRef    = useRef<HTMLDivElement>(null);
+  const [state, dispatch] = useReducer(reducer, initialState);
+  const [inputVal, setInputVal] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+  const [searchMode, setSearchMode] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchMatch, setSearchMatch] = useState("");
+  const [showMatrix, setShowMatrix] = useState(false);
 
-  const touchStartY = useRef<number>(0);
-  const touchMoved  = useRef<boolean>(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const matrixCanvasRef = useRef<HTMLCanvasElement>(null);
+  const konamiBuf = useRef<string[]>([]);
+  const historyIdxRef = useRef(-1);
 
-  // State
-  const [lines, setLines]           = useState<TerminalLine[]>([
-    line("Terminal v2.0 — type 'help' for commands.", "system"),
-  ]);
-  const [inputValue, setInputValue] = useState("");
-  const [history, setHistory]       = useState<string[]>([]);
-  const [, setHistIdx]              = useState(-1);
-  const [isFocused, setIsFocused]   = useState(false);
+  const { displayed: welcomeLines, done: welcomeDone } =
+    useTypewriter(WELCOME_LINES);
+  const sysInfo = useSysInfo();
 
-  const { ariaText, flush: flushAria } = useAriaQueue();
+  const router = useRouter();
+  const { setTheme } = useTheme();
 
-  // ── Scroll anchor on new output ──────────────────────────────────────────
+  // ── localStorage: load on mount ───────────────────────────────────────────
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [lines]);
+    try {
+      const saved = localStorage.getItem("terminal-history");
+      if (saved) {
+        const parsed = JSON.parse(saved) as string[];
+        dispatch({ type: "LOAD_HISTORY", history: parsed.slice(0, MAX_HISTORY) });
+      }
+    } catch {
+      /* noop */
+    }
+  }, []);
 
-  // ── LAYER 4 — rAF-debounced visualViewport → auto-scroll ─────────────────
-  //
-  // visualViewport fires up to 60 resize events/sec during keyboard animation.
-  // cancelAnimationFrame + rAF throttles execution to one scroll-call per
-  // display frame, preventing main-thread congestion and jank.
-  // 'block: nearest' avoids over-scroll if the prompt is already partially visible.
+  // ── localStorage: persist on change ──────────────────────────────────────
   useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
+    if (state.history.length === 0) return;
+    try {
+      localStorage.setItem(
+        "terminal-history",
+        JSON.stringify(state.history.slice(0, MAX_HISTORY))
+      );
+    } catch {
+      /* noop */
+    }
+  }, [state.history]);
 
-    const handleResize = () => {
-      bottomRef.current?.scrollIntoView({ block: "nearest" });
+  // ── Auto-scroll ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [state.lines, welcomeLines]);
+
+  // ── Konami Code ───────────────────────────────────────────────────────────
+  const KONAMI = [
+    "ArrowUp","ArrowUp","ArrowDown","ArrowDown",
+    "ArrowLeft","ArrowRight","ArrowLeft","ArrowRight","b","a",
+  ];
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      konamiBuf.current = [...konamiBuf.current, e.key].slice(-10);
+      if (konamiBuf.current.join(",") === KONAMI.join(",")) {
+        konamiBuf.current = [];
+        dispatch({
+          type: "PUSH_MANY",
+          lines: [
+            makeLine("output", [{ text: "⚡ CHEAT CODE ACTIVATED", color: "var(--term-amber)" }]),
+            makeLine("output", [{ text: "You found the easter egg. Ibrahim likes you already.", color: "var(--term-t2)" }]),
+            makeLine("output", [
+              { text: "→ reach out: ", color: "var(--term-t3)" },
+              { text: "ibrahim.pk848@gmail.com", color: "var(--term-acc)" },
+            ]),
+          ],
+        });
+      }
     };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    vv.addEventListener("resize", handleResize);
+  // ── Matrix animation ──────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!showMatrix) return;
+    const canvas = matrixCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    canvas.width = canvas.offsetWidth;
+    canvas.height = canvas.offsetHeight;
+
+    const cols = Math.floor(canvas.width / 14);
+    const drops = Array<number>(cols).fill(1);
+    const chars =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*イウエオカキクケコサシスセソ";
+
+    let animId: number;
+    const draw = () => {
+      ctx.fillStyle = "rgba(0, 0, 0, 0.05)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#4ade80";
+      ctx.font = "13px monospace";
+      drops.forEach((y, i) => {
+        const char = chars[Math.floor(Math.random() * chars.length)];
+        ctx.fillText(char, i * 14, y * 14);
+        if (y * 14 > canvas.height && Math.random() > 0.975) drops[i] = 0;
+        drops[i]++;
+      });
+      animId = requestAnimationFrame(draw);
+    };
+    animId = requestAnimationFrame(draw);
+
+    const stop = setTimeout(() => {
+      cancelAnimationFrame(animId);
+      setShowMatrix(false);
+    }, 4000);
+
     return () => {
-      vv.removeEventListener("resize", handleResize);
+      cancelAnimationFrame(animId);
+      clearTimeout(stop);
     };
-  }, []);
+  }, [showMatrix]);
 
-  // ── LAYER 5 — iOS 26 Liquid Glass offsetTop regression guard ─────────────
-  //
-  // iOS 26 introduced a bug: after keyboard dismissal, visualViewport.offsetTop
-  // gets stuck at ~24px instead of resetting to 0. This causes position:fixed
-  // elements (including the terminal) to drift upward with a phantom dead zone.
-  //
-  // Fix: On focusout, wait 100ms for the keyboard animation to physically
-  // complete, then check for the orphaned offset. If present, execute a
-  // silent scrollBy(0,-1)/scrollBy(0,1) nudge — forces WebKit to flush its
-  // internal visual viewport coordinate matrix and snap back to 0.
-  //
-  // Reference: stackoverflow.com/questions/iOS-26-Safari-visualViewport
-  //            github.com/zulip/zulip#37365
+  // ══════════════════════════════════════════════════════════════════════════
+  //  COMMAND EXECUTOR
+  // ══════════════════════════════════════════════════════════════════════════
+
+  const execCommand = useCallback(
+    (raw: string): OutputLine[] => {
+      const cmd = raw.trim().toLowerCase();
+
+      // ── sudo ──────────────────────────────────────────────────────────────
+      if (cmd.startsWith("sudo")) {
+        return [
+          [{ text: "ibrahim is not in the sudoers file.", color: "var(--term-red)" }],
+          [{ text: "This incident will not be reported. (relax — it's a portfolio)", color: "var(--term-t3)" }],
+        ];
+      }
+
+      // ── open <page> ───────────────────────────────────────────────────────
+      const openMatch = cmd.match(/^open\s+(\S+)$/);
+      if (openMatch) {
+        const target = openMatch[1];
+        const routes: Record<string, string> = {
+          blast: "/projects/blast",
+          dawn: "/projects/dawn",
+          zuban: "/projects/zuban",
+          capital: "/projects/capital",
+          projects: "/projects",
+          about: "/about",
+          contact: "/contact",
+          uses: "/uses",
+          home: "/",
+        };
+        if (routes[target]) {
+          setTimeout(() => router.push(routes[target]), 600);
+          return [
+            [
+              { text: "→ navigating to ", color: "var(--term-t3)" },
+              { text: routes[target], color: "var(--term-acc)" },
+            ],
+          ];
+        }
+        return [
+          [
+            {
+              text: `open: unknown page '${target}'. Try: blast dawn zuban capital about contact uses`,
+              color: "var(--term-red)",
+            },
+          ],
+        ];
+      }
+
+      // ── theme ─────────────────────────────────────────────────────────────
+      const themeMatch = cmd.match(/^theme\s+(dark|light|system)$/);
+      if (themeMatch) {
+        const mode = themeMatch[1];
+        setTheme(mode);
+        return [
+          [
+            { text: "theme set to: ", color: "var(--term-t3)" },
+            { text: mode, color: "var(--term-acc)" },
+          ],
+        ];
+      }
+      if (cmd === "theme") {
+        return [
+          [
+            { text: "usage: ", color: "var(--term-t3)" },
+            { text: "theme dark|light|system", color: "var(--term-t2)" },
+          ],
+        ];
+      }
+
+      switch (cmd) {
+        // ── clear ─────────────────────────────────────────────────────────
+        case "clear":
+          dispatch({ type: "CLEAR" });
+          return [];
+
+        // ── help ──────────────────────────────────────────────────────────
+        case "help":
+          return [
+            [{ text: "Available commands", color: "var(--term-t1)" }],
+            [{ text: "─────────────────────────────────────────────", color: "var(--term-t3)" }],
+            [
+              { text: "  whoami          ", color: "var(--term-acc)" },
+              { text: "who is this person", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  ls              ", color: "var(--term-acc)" },
+              { text: "list sections", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  ls projects/    ", color: "var(--term-acc)" },
+              { text: "list all projects", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  skills          ", color: "var(--term-acc)" },
+              { text: "proficiency bars", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  neofetch        ", color: "var(--term-acc)" },
+              { text: "system info card", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  git log         ", color: "var(--term-acc)" },
+              { text: "recent commits", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  cat README.md   ", color: "var(--term-acc)" },
+              { text: "read the README", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  cat contact.txt ", color: "var(--term-acc)" },
+              { text: "contact details", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  open <page>     ", color: "var(--term-acc)" },
+              { text: "navigate to a page", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  theme <mode>    ", color: "var(--term-acc)" },
+              { text: "dark | light | system", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  matrix          ", color: "var(--term-acc)" },
+              { text: "🕶️  enter the matrix", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  date            ", color: "var(--term-acc)" },
+              { text: "current date/time", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  history         ", color: "var(--term-acc)" },
+              { text: "command history", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  pwd             ", color: "var(--term-acc)" },
+              { text: "print working dir", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  clear           ", color: "var(--term-acc)" },
+              { text: "clear the screen", color: "var(--term-t2)" },
+            ],
+            [{ text: "" }],
+            [
+              { text: "  Ctrl+L ", color: "var(--term-amber)" },
+              { text: "clear · ", color: "var(--term-t3)" },
+              { text: "Ctrl+C ", color: "var(--term-amber)" },
+              { text: "cancel · ", color: "var(--term-t3)" },
+              { text: "Ctrl+R ", color: "var(--term-amber)" },
+              { text: "history search · ", color: "var(--term-t3)" },
+              { text: "Tab ", color: "var(--term-amber)" },
+              { text: "autocomplete", color: "var(--term-t3)" },
+            ],
+          ];
+
+        // ── whoami ────────────────────────────────────────────────────────
+        case "whoami":
+          return [
+            [
+              { text: "Ibrahim Salman", color: "var(--term-t1)" },
+              { text: " — CS student & builder", color: "var(--term-t2)" },
+            ],
+            [{ text: "  UET Taxila · Semester 2 of 8 · Islamabad, PK", color: "var(--term-t3)" }],
+            [{ text: "  Python · Next.js · TypeScript · LangChain · Java", color: "var(--term-t2)" }],
+            [{ text: "  Currently: open to internships & collaborations", color: "var(--term-green)" }],
+          ];
+
+        // ── ls ────────────────────────────────────────────────────────────
+        case "ls":
+          return [
+            [
+              { text: "about/  ", color: "var(--term-acc)" },
+              { text: "projects/  ", color: "var(--term-acc)" },
+              { text: "contact/  ", color: "var(--term-acc)" },
+              { text: "uses/  ", color: "var(--term-acc)" },
+              { text: "README.md  ", color: "var(--term-t2)" },
+            ],
+          ];
+
+        // ── ls projects/ ──────────────────────────────────────────────────
+        case "ls projects/":
+          return [
+            [
+              { text: "blast/  ", color: "var(--term-acc)" },
+              { text: "dawn/  ", color: "var(--term-acc)" },
+              { text: "zuban/  ", color: "var(--term-acc)" },
+              { text: "capital/", color: "var(--term-acc)" },
+            ],
+            [{ text: "  Use `open <name>` to navigate to any project.", color: "var(--term-t3)" }],
+          ];
+
+        // ── git log ───────────────────────────────────────────────────────
+        case "git log --oneline -5":
+          return [
+            [
+              { text: "a4f2c1e", color: "var(--term-amber)" },
+              { text: " feat: add ollama streaming to zuban chat", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "9b3d7f0", color: "var(--term-amber)" },
+              { text: " fix: normalise PSX decimal separators in BLAST parser", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "e8c1a44", color: "var(--term-amber)" },
+              { text: " feat: capital budgeting NPV/IRR calculator", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "7d9f2b3", color: "var(--term-amber)" },
+              { text: " chore: migrate portfolio to App Router", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "3f6a8c2", color: "var(--term-amber)" },
+              { text: " feat: terminal emulator with typewriter boot", color: "var(--term-t2)" },
+            ],
+          ];
+
+        // ── cat README.md ─────────────────────────────────────────────────
+        case "cat readme.md":
+          return [
+            [{ text: "# Ibrahim Salman", color: "var(--term-t1)" }],
+            [{ text: "" }],
+            [{ text: "CS student at UET Taxila building things that matter.", color: "var(--term-t2)" }],
+            [{ text: "Focused on AI/ML tooling, full-stack web apps, and", color: "var(--term-t2)" }],
+            [{ text: "financial data systems.", color: "var(--term-t2)" }],
+            [{ text: "" }],
+            [
+              { text: "→ ", color: "var(--term-acc)" },
+              { text: "github.com/devhms", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "→ ", color: "var(--term-acc)" },
+              { text: "ibrahim.pk848@gmail.com", color: "var(--term-t2)" },
+            ],
+          ];
+
+        // ── cat contact.txt ───────────────────────────────────────────────
+        case "cat contact.txt":
+          return [
+            [{ text: "Contact", color: "var(--term-t1)" }],
+            [{ text: "────────────────────────────────────", color: "var(--term-t3)" }],
+            [
+              { text: "  email:    ", color: "var(--term-t3)" },
+              { text: "ibrahim.pk848@gmail.com", color: "var(--term-acc)" },
+            ],
+            [
+              { text: "  github:   ", color: "var(--term-t3)" },
+              { text: "github.com/devhms", color: "var(--term-acc)" },
+            ],
+            [
+              { text: "  location: ", color: "var(--term-t3)" },
+              { text: "Islamabad, PK · UTC+5", color: "var(--term-t2)" },
+            ],
+          ];
+
+        // ── pwd ───────────────────────────────────────────────────────────
+        case "pwd":
+          return [[{ text: "/home/ibrahim/portfolio", color: "var(--term-t2)" }]];
+
+        // ── date ──────────────────────────────────────────────────────────
+        case "date":
+          return [[{ text: new Date().toString(), color: "var(--term-t2)" }]];
+
+        // ── history ───────────────────────────────────────────────────────
+        case "history":
+          if (state.history.length === 0)
+            return [[{ text: "No history yet.", color: "var(--term-t3)" }]];
+          return state.history
+            .slice(0, 20)
+            .map((h, i) => [
+              { text: `  ${String(i + 1).padStart(3, " ")}  `, color: "var(--term-t3)" },
+              { text: h, color: "var(--term-t2)" },
+            ] as Segment[]);
+
+        // ── matrix ────────────────────────────────────────────────────────
+        case "matrix":
+          setShowMatrix(true);
+          return [
+            [{ text: "Entering the matrix... (4s)", color: "var(--term-green)" }],
+          ];
+
+        // ── neofetch ──────────────────────────────────────────────────────
+        case "neofetch": {
+          const art = [
+            "  ██╗██████╗ ██████╗  █████╗ ██╗  ██╗██╗███╗   ███╗",
+            "  ██║██╔══██╗██╔══██╗██╔══██╗██║  ██║██║████╗ ████║",
+            "  ██║██████╔╝██████╔╝███████║███████║██║██╔████╔██║",
+            "  ██║██╔══██╗██╔══██╗██╔══██║██╔══██║██║██║╚██╔╝██║",
+            "  ██║██████╔╝██║  ██║██║  ██║██║  ██║██║██║ ╚═╝ ██║",
+            "  ╚═╝╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝     ╚═╝",
+          ];
+          const artColors = [
+            "var(--term-acc)", "var(--term-acc)", "var(--term-acc)",
+            "var(--term-amber)", "var(--term-amber)", "var(--term-t3)",
+          ];
+          return [
+            ...art.map((line, i) => [{ text: line, color: artColors[i] }] as Segment[]),
+            [{ text: "" }],
+            [
+              { text: "  user@", color: "var(--term-t3)" },
+              { text: "devhms", color: "var(--term-acc)" },
+            ],
+            [{ text: "  ─────────────────────────────────────", color: "var(--term-t3)" }],
+            [
+              { text: "  name:       ", color: "var(--term-t3)" },
+              { text: "Ibrahim Salman", color: "var(--term-t1)" },
+            ],
+            [
+              { text: "  handle:     ", color: "var(--term-t3)" },
+              { text: "@devhms", color: "var(--term-acc)" },
+            ],
+            [
+              { text: "  uni:        ", color: "var(--term-t3)" },
+              { text: "UET Taxila · Semester 2 of 8", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  location:   ", color: "var(--term-t3)" },
+              { text: "Islamabad, PK · UTC+5", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  status:     ", color: "var(--term-t3)" },
+              { text: "● open-to-work", color: "var(--term-green)" },
+            ],
+            [
+              { text: "  stack:      ", color: "var(--term-t3)" },
+              { text: "Python · Next.js · TS · LangChain · Java", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  cpu:        ", color: "var(--term-t3)" },
+              { text: sysInfo.cores ? `${sysInfo.cores} cores` : "unknown", color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  memory:     ", color: "var(--term-t3)" },
+              { text: sysInfo.memory, color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  resolution: ", color: "var(--term-t3)" },
+              { text: sysInfo.resolution, color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  timezone:   ", color: "var(--term-t3)" },
+              { text: sysInfo.timezone, color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  os:         ", color: "var(--term-t3)" },
+              { text: sysInfo.platform, color: "var(--term-t2)" },
+            ],
+            [
+              { text: "  browser:    ", color: "var(--term-t3)" },
+              { text: sysInfo.browser, color: "var(--term-t2)" },
+            ],
+            [{ text: "" }],
+            [
+              { text: "  " },
+              { text: "██", color: "#ff5f57" },
+              { text: "██", color: "#febc2e" },
+              { text: "██", color: "#28c840" },
+              { text: "██", color: "var(--term-acc)" },
+              { text: "██", color: "var(--term-green)" },
+              { text: "██", color: "var(--term-amber)" },
+              { text: "██", color: "var(--term-t2)" },
+              { text: "██", color: "var(--term-t1)" },
+            ],
+          ];
+        }
+
+        // ── skills ────────────────────────────────────────────────────────
+        case "skills": {
+          const items = [
+            { name: "Python",     pct: 85 },
+            { name: "Next.js",    pct: 75 },
+            { name: "TypeScript", pct: 70 },
+            { name: "Java",       pct: 65 },
+            { name: "LangChain",  pct: 60 },
+          ];
+          return [
+            [{ text: "Skills", color: "var(--term-t1)" }],
+            [{ text: "────────────────────────────────────────────", color: "var(--term-t3)" }],
+            ...items.map(({ name, pct }) => {
+              const filled = Math.round(pct / 5);
+              const bar = "█".repeat(filled) + "░".repeat(20 - filled);
+              return [
+                { text: `  ${name.padEnd(12)}`, color: "var(--term-t3)" },
+                { text: bar, color: "var(--term-acc)" },
+                { text: ` ${pct}%`, color: "var(--term-t2)" },
+              ] as Segment[];
+            }),
+          ];
+        }
+
+        // ── not found ─────────────────────────────────────────────────────
+        default:
+          if (!cmd) return [];
+          return [
+            [
+              { text: `bash: `, color: "var(--term-t3)" },
+              { text: raw.trim(), color: "var(--term-red)" },
+              { text: `: command not found. Type `, color: "var(--term-t3)" },
+              { text: "help", color: "var(--term-acc)" },
+              { text: " for a list.", color: "var(--term-t3)" },
+            ],
+          ];
+      }
+    },
+    [sysInfo, state.history, router, setTheme]
+  );
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  RUN COMMAND
+  // ══════════════════════════════════════════════════════════════════════════
+
+  const runCommand = useCallback(
+    (raw: string) => {
+      const cmd = raw.trim();
+      if (!cmd) return;
+
+      // Echo input line
+      dispatch({
+        type: "PUSH",
+        line: makeLine("input", [
+          { text: "$ ", color: "var(--term-acc)" },
+          { text: cmd, color: "var(--term-t1)" },
+        ]),
+      });
+
+      // Add to history
+      dispatch({ type: "ADD_HISTORY", cmd });
+      historyIdxRef.current = -1;
+
+      // Execute
+      const outputLines = execCommand(raw);
+      if (outputLines.length > 0) {
+        dispatch({
+          type: "PUSH_MANY",
+          lines: outputLines.map((l) => makeLine("output", l)),
+        });
+      }
+    },
+    [execCommand]
+  );
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  KEY HANDLER
+  // ══════════════════════════════════════════════════════════════════════════
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // ── Ctrl+L ─────────────────────────────────────────────────────────────
+    if (e.key === "l" && e.ctrlKey) {
+      e.preventDefault();
+      dispatch({ type: "CLEAR" });
+      return;
+    }
+
+    // ── Ctrl+C ─────────────────────────────────────────────────────────────
+    if (e.key === "c" && e.ctrlKey && !searchMode) {
+      e.preventDefault();
+      dispatch({
+        type: "PUSH",
+        line: makeLine("input", [
+          { text: `$ ${inputVal}`, color: "var(--term-t3)" },
+          { text: "^C", color: "var(--term-red)" },
+        ]),
+      });
+      setInputVal("");
+      return;
+    }
+
+    // ── Ctrl+R — enter search mode ─────────────────────────────────────────
+    if (e.key === "r" && e.ctrlKey) {
+      e.preventDefault();
+      setSearchMode(true);
+      setSearchQuery("");
+      setSearchMatch("");
+      return;
+    }
+
+    // ── Search mode keys ───────────────────────────────────────────────────
+    if (searchMode) {
+      if (e.key === "Escape" || (e.key === "g" && e.ctrlKey)) {
+        e.preventDefault();
+        setSearchMode(false);
+        setSearchQuery("");
+        return;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        setSearchMode(false);
+        if (searchMatch) {
+          setInputVal(searchMatch);
+        }
+        return;
+      }
+      return;
+    }
+
+    // ── Tab ────────────────────────────────────────────────────────────────
+    if (e.key === "Tab") {
+      e.preventDefault();
+      setInputVal(autocomplete(inputVal));
+      return;
+    }
+
+    // ── Enter ──────────────────────────────────────────────────────────────
+    if (e.key === "Enter") {
+      runCommand(inputVal);
+      setInputVal("");
+      historyIdxRef.current = -1;
+      return;
+    }
+
+    // ── History navigation ─────────────────────────────────────────────────
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      const next = Math.min(historyIdxRef.current + 1, state.history.length - 1);
+      historyIdxRef.current = next;
+      setInputVal(state.history[next] ?? "");
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      const next = Math.max(historyIdxRef.current - 1, -1);
+      historyIdxRef.current = next;
+      setInputVal(next === -1 ? "" : state.history[next] ?? "");
+      return;
+    }
+  };
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  CHANGE HANDLER
+  // ══════════════════════════════════════════════════════════════════════════
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setInputVal(val);
+    setIsTyping(true);
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    typingTimerRef.current = setTimeout(() => setIsTyping(false), 800);
+
+    if (searchMode) {
+      setSearchQuery(val);
+      const match = [...state.history]
+        .reverse()
+        .find((h) => h.includes(val));
+      setSearchMatch(match ?? "");
+    }
+  };
+
+  // Cleanup typing timer
   useEffect(() => {
-    const input = inputRef.current;
-    if (!input) return;
-
-    const onFocusOut = () => {
-      setTimeout(() => {
-        const vv = window.visualViewport;
-        if (vv && vv.offsetTop > 0) {
-          window.scrollBy(0, -1);
-          window.scrollBy(0, 1);
-        }
-      }, 100);
+    return () => {
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
     };
-
-    input.addEventListener("focusout", onFocusOut);
-    return () => input.removeEventListener("focusout", onFocusOut);
   }, []);
 
-  // ── Command execution ─────────────────────────────────────────────────────
-  const execCommand = useCallback((cmd: string) => {
-    setLines(prev => {
-      const { next, aria } = runCommand(cmd, prev);
-      if (aria) flushAria(aria);
-      return next;
-    });
-    if (cmd.trim()) setHistory(h => [cmd, ...h].slice(0, 100));
-    setHistIdx(-1);
-    setInputValue("");
-  }, [flushAria]);
+  const ghost = ghostSuggestion(inputVal);
 
-  // ── Keyboard handler ──────────────────────────────────────────────────────
-  const onKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
-    switch (e.key) {
-      case "Enter":
-        e.preventDefault();
-        execCommand(inputValue);
-        break;
-      case "ArrowUp":
-        e.preventDefault();
-        setHistIdx(i => {
-          const next = Math.min(i + 1, history.length - 1);
-          setInputValue(history[next] ?? "");
-          return next;
-        });
-        break;
-      case "ArrowDown":
-        e.preventDefault();
-        setHistIdx(i => {
-          const next = Math.max(i - 1, -1);
-          setInputValue(next === -1 ? "" : (history[next] ?? ""));
-          return next;
-        });
-        break;
-      case "l":
-        if (e.ctrlKey) {
-          e.preventDefault();
-          setLines([]);
-          flushAria("Terminal cleared.");
-        }
-        break;
-      case "Tab":
-        e.preventDefault();
-        // Future: tab completion
-        break;
-    }
-  }, [inputValue, history, execCommand, flushAria]);
-
-  // ── LAYER 3 — Time-Delta Discriminator (tap vs scroll) ───────────────────
-  // Updated tracking pattern to track Y-delta cleanly
-  const onTouchStart = useCallback((e: React.TouchEvent) => {
-    touchStartY.current = e.touches[0].clientY;
-    touchMoved.current  = false;
-  }, []);
-
-  const onTouchMove = useCallback((e: React.TouchEvent) => {
-    if (Math.abs(e.touches[0].clientY - touchStartY.current) > 8) {
-      touchMoved.current = true; // user is scrolling
-    }
-  }, []);
-
-  const onTouchEnd = useCallback(() => {
-    if (!touchMoved.current) {
-      inputRef.current?.focus(); // only focus on genuine tap
-    }
-  }, []);
-
-  // Desktop click — guard against double-firing on touch devices
-  const onDesktopClick = useCallback(() => {
-    // pointer:coarse = touch display. onTouchEnd already called focus().
-    // pointer:fine   = mouse/trackpad. onClick is the correct event here.
-    if (!window.matchMedia("(pointer: coarse)").matches) {
-      inputRef.current?.focus();
-    }
-  }, []);
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // RENDER
-  // ─────────────────────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  //  RENDER
+  // ══════════════════════════════════════════════════════════════════════════
 
   return (
     <>
-      {/*
-        ════════════════════════════════════════════════════════════════
-        LAYER 7 — ARIA Live Region
-        ════════════════════════════════════════════════════════════════
+      {/* ── Global styles ─────────────────────────────────────────────────── */}
+      <style>{`
+        :root {
+          --term-bg:     #0d1117;
+          --term-bg2:    #161b22;
+          --term-border: #30363d;
+          --term-t1:     #e6edf3;
+          --term-t2:     #8b949e;
+          --term-t3:     #484f58;
+          --term-acc:    #58a6ff;
+          --term-green:  #3fb950;
+          --term-amber:  #d29922;
+          --term-red:    #f85149;
+        }
 
-        MUST be present in the initial render. VoiceOver and TalkBack parse the
-        accessibility tree on mount; dynamically injected live regions are
-        silently ignored by both iOS VoiceOver and Android TalkBack.
+        @keyframes blink {
+          0%, 100% { opacity: 1; }
+          50%       { opacity: 0; }
+        }
 
-        aria-live="assertive" — immediately interrupts the screen reader to
-          announce terminal output. Mirrors the real-time feedback of a shell.
-        aria-atomic="true" — reads the complete updated region as one utterance.
-          Prevents character-by-character streaming announcements during output.
+        .term-root {
+          font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+          background: var(--term-bg);
+          color: var(--term-t2);
+          font-size: 0.8125rem;
+          line-height: 1.65;
+          border-radius: 0.75rem;
+          box-shadow:
+            0 0 0 1px var(--term-border),
+            0 20px 60px rgba(0,0,0,0.6),
+            0 0 80px rgba(88,166,255,0.04);
+          overflow: hidden;
+          position: relative;
+          max-width: 780px;
+          margin: 0 auto;
+          display: flex;
+          flex-direction: column;
+          height: 520px;
+          user-select: text;
+        }
 
-        visually hidden via the sr-only pattern (not display:none, which removes
-        the element from the accessibility tree entirely).
-      */}
+        /* Chrome / title bar */
+        .term-chrome {
+          display: flex;
+          align-items: center;
+          gap: 0.375rem;
+          padding: 0.625rem 1rem;
+          background: var(--term-bg2);
+          border-bottom: 1px solid var(--term-border);
+          flex-shrink: 0;
+        }
+        .term-dot {
+          width: 0.6875rem;
+          height: 0.6875rem;
+          border-radius: 50%;
+        }
+        .term-title {
+          flex: 1;
+          text-align: center;
+          font-size: 0.6875rem;
+          color: var(--term-t3);
+          letter-spacing: 0.025em;
+        }
+        .term-hints {
+          font-size: 0.625rem;
+          color: var(--term-t3);
+          opacity: 0.6;
+          white-space: nowrap;
+        }
+
+        /* Body / scroll area */
+        .term-body {
+          flex: 1;
+          overflow-y: auto;
+          padding: 0.875rem 1.125rem 0.5rem;
+          scroll-behavior: smooth;
+        }
+        .term-body::-webkit-scrollbar { width: 4px; }
+        .term-body::-webkit-scrollbar-track { background: transparent; }
+        .term-body::-webkit-scrollbar-thumb { background: var(--term-border); border-radius: 2px; }
+
+        /* Input row */
+        .term-input-row {
+          display: flex;
+          align-items: center;
+          padding: 0.5rem 1.125rem 0.75rem;
+          background: var(--term-bg);
+          flex-shrink: 0;
+          border-top: 1px solid rgba(48,54,61,0.5);
+        }
+        .term-prompt-sym {
+          color: var(--term-acc);
+          flex-shrink: 0;
+          margin-right: 0.25rem;
+        }
+        .term-cursor {
+          display: inline-block;
+          width: 0.55em;
+          height: 1.05em;
+          background: var(--term-acc);
+          vertical-align: text-bottom;
+          margin-left: 1px;
+        }
+      `}</style>
+
+      {/* ── Terminal window ────────────────────────────────────────────────── */}
       <div
-        aria-live="assertive"
-        aria-atomic="true"
-        aria-label="Terminal output"
-        style={{
-          position:   "absolute",
-          width:      1,
-          height:     1,
-          padding:    0,
-          margin:    -1,
-          overflow:   "hidden",
-          clip:       "rect(0,0,0,0)",
-          whiteSpace: "nowrap",
-          border:     0,
-          pointerEvents: "none",
-        }}
-      >
-        {ariaText}
-      </div>
-
-      {/* ═══════════════════════════════════════════════════════════════
-          Terminal Root Container
-          ═══════════════════════════════════════════════════════════════ */}
-      <div
-        ref={containerRef}
         className="term-root"
+        onClick={() => inputRef.current?.focus()}
         role="application"
-        aria-label="Interactive terminal emulator. Type commands and press Enter."
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-        onClick={onDesktopClick}
-        style={{
-          /*
-           * LAYER 1 — DVH Height Cascade
-           *
-           * Step 1: vh fallback for iOS < 16 and other pre-dvh environments.
-           * Step 2: dvh override applied via .term-root CSS class (see <style> block).
-           *         dvh recalculates per-frame as keyboard/toolbars animate.
-           *
-           * min-height: prevents collapse on keyboards that dominate small screens.
-           * max-height: preserves the design aesthetic on large viewports.
-           */
-          height:    "calc(var(--terminal-offset, 12rem) * -1 + 100vh)",
-          minHeight: 350,
-          maxHeight: 520,
-
-          // Layout
-          display:        "flex",
-          flexDirection:  "column",
-          position:       "relative",
-          fontFamily:     "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-          backgroundColor: "#0d0d0d",
-          border:         "1px solid rgba(0,255,156,0.2)",
-          borderRadius:   4,
-          overflow:       "hidden",
-
-          /*
-           * LAYER 6 (partial) — applied inline for specificity certainty.
-           * The rest of the touch-suppression matrix is in the <style> block.
-           */
-          WebkitTapHighlightColor: "transparent",
-          direction:      "ltr",
-          textAlign:      "left",
-        }}
+        aria-label="Terminal emulator"
       >
-        {/* ── Title bar ─────────────────────────────────────────────── */}
-        <div
-          aria-hidden="true"
-          style={{
-            display:         "flex",
-            alignItems:      "center",
-            gap:             6,
-            padding:         "8px 14px",
-            backgroundColor: "#111",
-            borderBottom:    "1px solid rgba(0,255,156,0.1)",
-            flexShrink:      0,
-            userSelect:      "none",
-          }}
-        >
-          {[["#ff5f57","close"], ["#febc2e","minimise"], ["#28c840","maximise"]].map(([bg, label]) => (
-            <span
-              key={label}
-              aria-label={label}
-              style={{ width: 10, height: 10, borderRadius: "50%", background: bg, flexShrink: 0 }}
-            />
-          ))}
-          <span style={{ flex: 1, textAlign: "center", fontSize: 11, color: "#555", letterSpacing: "0.12em" }}>
-            ibrahim@portfolio — bash
+        {/* Chrome bar */}
+        <div className="term-chrome">
+          <span className="term-dot" style={{ background: "#ff5f57" }} />
+          <span className="term-dot" style={{ background: "#febc2e" }} />
+          <span className="term-dot" style={{ background: "#28c840" }} />
+          <span className="term-title">ibrahim@devhms — ~</span>
+          <span className="term-hints">
+            Tab:complete · ↑↓:history · Ctrl+R:search · Ctrl+L:clear
           </span>
         </div>
 
-        {/* ════════════════════════════════════════════════════════════
-            LAYER 8 — Output scrolling area (overflow-anchor + momentum)
-            ════════════════════════════════════════════════════════════ */}
-        <div
-          ref={outputRef}
-          role="log"
-          aria-label="Terminal history"
-          aria-live="off"
-          style={{
-            flex:           1,
-            overflowY:      "auto",
-            overflowX:      "hidden",
-            padding:        "12px 14px 6px",
-
-            /*
-             * overflow-anchor: auto (browser default, explicit here for intent clarity)
-             * When new lines are appended to the DOM above the user's scroll
-             * position, the browser keeps the visible anchor node stationary.
-             * Without this, stdout injection during a scroll session violently
-             * jumps the viewport. Combined with rAF scroll-to-bottom, this gives
-             * terminal-grade scroll stability.
-             */
-            overflowAnchor: "auto",
-
-            /*
-             * Momentum scrolling on iOS.
-             * Without this the scroll decelerates abruptly (no inertia),
-             * feeling robotic on iPhones compared to native apps.
-             */
-            WebkitOverflowScrolling: "touch" as "auto" | "touch",
-
-
-            /*
-             * Prevent scroll chaining: reaching the top/bottom of terminal
-             * history won't trigger pull-to-refresh or body bounce on the
-             * parent page.
-             */
-            overscrollBehaviorY: "contain",
-          }}
-        >
-          {lines.map(l => (
+        {/* Scrollable output */}
+        <div className="term-body">
+          {/* Typewriter welcome */}
+          {welcomeLines.map((line, i) => (
             <div
-              key={l.id}
-              className="term-line"
-              style={{
-                marginBottom: 2,
-                fontSize:     13,
-                lineHeight:   1.65,
-                fontFamily:   "inherit",
-                color:
-                  l.type === "error"  ? "#ff6b6b" :
-                  l.type === "input"  ? "#00FF9C" :
-                  l.type === "system" ? "#555"    : "#ccc",
-                whiteSpace: "pre-wrap",
-                wordBreak:  "break-word",
-                // Per LAYER 6: re-enable text selection on output lines only
-                userSelect:       "text",
-                WebkitUserSelect: "text",
-                direction:        "ltr",
-                textAlign:        "left",
-              }}
+              key={`w${i}`}
+              style={{ lineHeight: 1.65, color: "var(--term-t3)" }}
             >
-              {l.content}
+              {i === 0 ? (
+                <>
+                  <span style={{ color: "var(--term-acc)" }}>ibrahim</span>
+                  <span style={{ color: "var(--term-t3)" }}>@devhms:~$ </span>
+                  <span style={{ color: "var(--term-t2)" }}>{line}</span>
+                </>
+              ) : (
+                <span style={{ color: "var(--term-t3)" }}>{line}</span>
+              )}
             </div>
           ))}
+          {welcomeDone && <div style={{ height: "0.5rem" }} />}
 
-          {/* ── Live input line (visual cursor) ─────────────────────── */}
-          <div style={{ display: "flex", alignItems: "center", marginTop: 4 }}>
-            <span style={{ color: "#00FF9C", fontFamily: "inherit", fontSize: 13, marginRight: 6, flexShrink: 0 }}>
-              $
-            </span>
-            <span style={{ fontSize: 13, fontFamily: "inherit", color: "#fff", wordBreak: "break-all", flex: 1, direction: "ltr", textAlign: "left" }}>
-              {inputValue}
-            </span>
-            <span
-              aria-hidden="true"
+          {/* Output lines */}
+          {welcomeDone &&
+            state.lines.map((line) => (
+              <OutputRow key={line.id} line={line} />
+            ))}
+
+          {/* Scroll anchor */}
+          <div ref={bottomRef} />
+        </div>
+
+        {/* Matrix canvas overlay */}
+        {showMatrix && (
+          <canvas
+            ref={matrixCanvasRef}
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              zIndex: 20,
+              borderRadius: "inherit",
+            }}
+          />
+        )}
+
+        {/* Input area */}
+        {welcomeDone && (
+          <div className="term-input-row" style={{ direction: "ltr", textAlign: "left" }}>
+            {searchMode ? (
+              /* Reverse-i-search prompt */
+              <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
+                <span style={{ color: "var(--term-t3)", flexShrink: 0 }}>
+                  (reverse-i-search)`
+                </span>
+                <span style={{ color: "var(--term-t1)" }}>{searchQuery}</span>
+                <span style={{ color: "var(--term-t3)" }}>&apos;: </span>
+                <span style={{ color: "var(--term-acc)" }}>{searchMatch}</span>
+                <span style={{ color: "var(--term-t3)", marginLeft: "0.5rem", fontSize: "0.625rem" }}>
+                  Enter:select · Esc:cancel
+                </span>
+              </div>
+            ) : (
+              /* Normal prompt */
+              <>
+                <span className="term-prompt-sym">$ </span>
+                {/* Typed text */}
+                <span style={{ color: "var(--term-t1)", whiteSpace: "pre", direction: "ltr", textAlign: "left" }}>
+                  {inputVal}
+                </span>
+                {/* Ghost suggestion */}
+                {ghost && (
+                  <span
+                    style={{
+                      color: "var(--term-t3)",
+                      opacity: 0.4,
+                      whiteSpace: "pre",
+                    }}
+                  >
+                    {ghost}
+                  </span>
+                )}
+                {/* Cursor */}
+                <span
+                  className="term-cursor"
+                  style={{
+                    animation: isTyping
+                      ? "none"
+                      : "blink 1.1s step-end infinite",
+                  }}
+                />
+              </>
+            )}
+
+            {/* Hidden real input */}
+            <input
+              ref={inputRef}
+              value={searchMode ? searchQuery : inputVal}
+              onChange={handleChange}
+              onKeyDown={handleKeyDown}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              aria-label="Terminal input"
               style={{
-                display:    "inline-block",
-                width:      7,
-                height:     14,
-                marginLeft: 1,
-                flexShrink: 0,
-                background: isFocused ? "#00FF9C" : "#1e1e1e",
-                animation:  isFocused ? "term-blink 1s step-end infinite" : "none",
+                position: "absolute",
+                opacity: 0,
+                width: 0,
+                height: 0,
+                pointerEvents: "none",
+                fontSize: "16px",
+                direction: "ltr",
+                textAlign: "left",
               }}
             />
           </div>
+        )}
 
-          {/* Scroll anchor — bottomRef.scrollIntoView() target */}
-          <div ref={bottomRef} style={{ height: 1 }} aria-hidden="true" />
-        </div>
-
-        {/*
-         * ════════════════════════════════════════════════════════════
-         * LAYER 2 — Hidden Keystroke Capture Input
-         * ════════════════════════════════════════════════════════════
-         *
-         * font-size: 16px
-         *   iOS Safari will automatically zoom the viewport if a focused
-         *   input's computed font-size < 16px. This is hardcoded in WebKit.
-         *   Setting transform:scale(0) hides it visually but does NOT change
-         *   the computed font-size — zoom bypass remains effective.
-         *   THIS IS THE SINGLE MOST CRITICAL LINE IN THIS FILE.
-         *
-         * autoCapitalize="none"
-         *   WHATWG canonical value. "off" is interpreted inconsistently across
-         *   mobile browsers. "none" definitively suppresses first-letter caps.
-         *   Prevents 'Docker Build' from appearing instead of 'docker build'.
-         *
-         * inputMode="text"
-         *   Explicitly requests full alphanumeric keyboard on iPadOS, Samsung
-         *   DeX, and non-standard Android OEM builds. Without it, some devices
-         *   may serve a numeric pad or URL keyboard for unfocused hidden inputs.
-         *
-         * tabIndex={-1}
-         *   Removes from tab order. Desktop keyboard users navigate to the
-         *   terminal via the container; this input is an internal implementation
-         *   detail.
-         *
-         * aria-hidden="true"
-         *   Screen reader users receive feedback via the assertive live region
-         *   above. Exposing this raw invisible input would confuse screen readers.
-         */}
-        <input
-          ref={inputRef}
-          type="text"
-          value={inputValue}
-          onChange={e => setInputValue(e.target.value)}
-          onKeyDown={onKeyDown}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => setIsFocused(false)}
-          autoCapitalize="none"
-          autoComplete="off"
-          autoCorrect="off"
-          spellCheck={false}
-          inputMode="text"
-          tabIndex={-1}
-          aria-hidden="true"
+        {/* ARIA live region (screen-reader only) */}
+        <div
+          aria-live="polite"
+          aria-atomic="false"
           style={{
-            position:      "absolute",
-            fontSize:      "16px",   // ← iOS zoom bypass. NEVER go below this.
-            opacity:       0,
-            pointerEvents: "none",
-            width:         "1px",
-            height:        "1px",
-            padding:       0,
-            margin:        0,
-            border:        "none",
-            outline:       "none",
-            background:    "transparent",
-            color:         "transparent",
-            caretColor:    "transparent",
-            top:           0,
-            left:          0,
-            // Scale to nothing without changing computed font-size
-            transform:       "scale(0)",
-            transformOrigin: "top left",
-            direction:       "ltr",
-            textAlign:       "left",
+            position: "absolute",
+            width: "1px",
+            height: "1px",
+            padding: 0,
+            margin: "-1px",
+            overflow: "hidden",
+            clip: "rect(0,0,0,0)",
+            whiteSpace: "nowrap",
+            border: 0,
           }}
-        />
-
-        {/* ── Scoped CSS (portability: no external stylesheet dependency) ── */}
-        <style>{`
-          @keyframes term-blink {
-            0%, 100% { opacity: 1; }
-            50%       { opacity: 0; }
-          }
-
-          /*
-           * LAYER 1 — DVH override
-           * Browsers that support dvh apply this rule. Browsers that don't
-           * keep the inline 'height: calc(100vh - 12rem)' from the style prop.
-           * !important ensures the dvh value wins over the inline style.
-           */
-          .term-root {
-            height:    calc(var(--terminal-offset, 12rem) * -1 + 100dvh) !important;
-            min-height: 350px;
-            max-height: 520px;
-          }
-
-          /*
-           * LAYER 6 — CSS Touch Suppression Matrix
-           *
-           * touch-action: pan-y
-           *   Compositor thread owns vertical scrolling. Browser fires
-           *   pointercancel on scroll gestures, preventing JS focus logic.
-           *   Also blocks horizontal swipe-back/forward browser navigation.
-           *
-           * -webkit-tap-highlight-color: transparent
-           *   Suppresses the blue/grey OS flash on tap. On a dark terminal,
-           *   this flash is blinding and visually disruptive.
-           *
-           * overscroll-behavior: contain
-           *   Traps scroll physics within the terminal. Prevents pull-to-refresh
-           *   and scroll chaining to the parent page body.
-           *
-           * -webkit-overflow-scrolling: touch
-           *   Restores native momentum (inertial) scrolling on iOS. Without
-           *   this, scrolling feels stiff compared to native apps.
-           *
-           * user-select: none on .term-root
-           *   Prevents OS magnifier glass and text-selection handles appearing
-           *   on long-press anywhere on the terminal chrome.
-           *
-           * user-select: text on .term-line (override)
-           *   Re-enables copy-paste on output lines only. Users must be able
-           *   to copy error messages, paths, and command output.
-           */
-          .term-root {
-            touch-action:              pan-y;
-            -webkit-tap-highlight-color: transparent;
-            overscroll-behavior:       contain;
-            -webkit-overflow-scrolling: touch;
-            -webkit-user-select:       none;
-            user-select:               none;
-          }
-
-          .term-line {
-            -webkit-user-select: text;
-            user-select:         text;
-          }
-        `}</style>
+        >
+          {state.lines[state.lines.length - 1]?.segments.map((s) => s.text).join("") ?? ""}
+        </div>
       </div>
     </>
   );
