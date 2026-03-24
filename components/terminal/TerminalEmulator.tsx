@@ -1015,6 +1015,8 @@ export default function TerminalEmulator() {
           flex-direction: column;
           height: 520px;
           user-select: text;
+          direction: ltr !important;
+          text-align: left !important;
         }
 
         /* Chrome / title bar */
@@ -1052,6 +1054,8 @@ export default function TerminalEmulator() {
           overflow-y: auto;
           padding: 0.875rem 1.125rem 0.5rem;
           scroll-behavior: smooth;
+          direction: ltr !important;
+          text-align: left !important;
         }
         .term-body::-webkit-scrollbar { width: 4px; }
         .term-body::-webkit-scrollbar-track { background: transparent; }
@@ -1065,6 +1069,8 @@ export default function TerminalEmulator() {
           background: var(--term-bg);
           flex-shrink: 0;
           border-top: 1px solid rgba(48,54,61,0.5);
+          direction: ltr !important;
+          text-align: left !important;
         }
         .term-prompt-sym {
           color: var(--term-acc);
