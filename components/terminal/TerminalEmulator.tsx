@@ -1007,12 +1007,6 @@ export default function TerminalEmulator() {
       target.setSelectionRange(target.value.length, target.value.length);
     });
 
-    // Sync selection to end (Mobile fix for reverse typing)
-    const target = e.target;
-    requestAnimationFrame(() => {
-      target.setSelectionRange(target.value.length, target.value.length);
-    });
-
     if (searchMode) {
       setSearchQuery(val);
       const match = [...state.history]
@@ -1075,7 +1069,7 @@ export default function TerminalEmulator() {
       const handleFocus = () => {
         if (
           /iPad|iPhone|iPod/.test(navigator.userAgent) &&
-          !window.MSStream &&
+          !(window as any).MSStream &&
           document.activeElement === mainInput
         ) {
           syncInput.focus();
