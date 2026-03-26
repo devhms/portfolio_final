@@ -37,12 +37,14 @@ export default function ProjectsPage() {
               display: "block",
               background: "var(--bg2)",
               border: "1px solid var(--b1)",
-              borderRadius: "10px",
-              padding: "1.25rem",
+              borderRadius: "12px",
+              padding: "1.5rem",
               textDecoration: "none",
               color: "inherit",
-              transition: "border-color 0.15s",
+              transition: "all 200ms ease",
+              boxShadow: "var(--shadow-sm)",
             }}
+            className="bento-card"
           >
             <div
               style={{

@@ -586,7 +586,7 @@ export default function TerminalEmulator() {
             ],
             [
               { text: "  matrix          ", color: "var(--term-acc)" },
-              { text: "🕶️  enter the matrix", color: "var(--term-t2)" },
+              { text: "enter the matrix animation", color: "var(--term-t2)" },
             ],
             [
               { text: "  date            ", color: "var(--term-acc)" },
@@ -1069,7 +1069,7 @@ export default function TerminalEmulator() {
       const handleFocus = () => {
         if (
           /iPad|iPhone|iPod/.test(navigator.userAgent) &&
-          !(window as any).MSStream &&
+          !(window as { MSStream?: unknown }).MSStream &&
           document.activeElement === mainInput
         ) {
           syncInput.focus();

@@ -32,9 +32,12 @@ export default function ContactPage() {
           style={{
             background: "var(--bg2)",
             border: "1px solid var(--b1)",
-            borderRadius: "10px",
-            padding: "1.25rem",
+            borderRadius: "12px",
+            padding: "1.5rem",
+            boxShadow: "var(--shadow-sm)",
+            transition: "all 200ms ease",
           }}
+          className="bento-card"
         >
           <div className="section-label" style={{ marginBottom: "0.625rem" }}>Email</div>
           <div
@@ -64,9 +67,12 @@ export default function ContactPage() {
           style={{
             background: "var(--bg2)",
             border: "1px solid var(--b1)",
-            borderRadius: "10px",
-            padding: "1.25rem",
+            borderRadius: "12px",
+            padding: "1.5rem",
+            boxShadow: "var(--shadow-sm)",
+            transition: "all 200ms ease",
           }}
+          className="bento-card"
         >
           <div className="section-label" style={{ marginBottom: "0.625rem" }}>GitHub</div>
           <div
@@ -100,9 +106,12 @@ export default function ContactPage() {
           style={{
             background: "var(--bg2)",
             border: "1px solid var(--b1)",
-            borderRadius: "10px",
-            padding: "1.25rem",
+            borderRadius: "12px",
+            padding: "1.5rem",
+            boxShadow: "var(--shadow-sm)",
+            transition: "all 200ms ease",
           }}
+          className="bento-card"
         >
           <div className="section-label" style={{ marginBottom: "0.625rem" }}>Status</div>
           <div
@@ -144,8 +153,9 @@ export default function ContactPage() {
           style={{
             background: "var(--acc-bg)",
             border: "1px solid var(--acc-b)",
-            borderRadius: "10px",
-            padding: "1rem",
+            borderRadius: "12px",
+            padding: "1.25rem",
+            boxShadow: "var(--shadow-sm)",
             fontSize: "0.8125rem",
             color: "var(--t2)",
             lineHeight: 1.7,

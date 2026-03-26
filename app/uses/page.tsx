@@ -77,8 +77,9 @@ export default function UsesPage() {
               style={{
                 background: "var(--bg2)",
                 border: "1px solid var(--b1)",
-                borderRadius: "8px",
+                borderRadius: "12px",
                 overflow: "hidden",
+                boxShadow: "var(--shadow-sm)",
               }}
             >
               {section.items.map((item, i) => (

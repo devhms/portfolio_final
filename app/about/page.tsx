@@ -66,8 +66,9 @@ export default function AboutPage() {
         style={{
           background: "var(--bg2)",
           border: "1px solid var(--b1)",
-          borderRadius: "10px",
+          borderRadius: "12px",
           overflow: "hidden",
+          boxShadow: "var(--shadow-sm)",
         }}
       >
         {/* File tab chrome */}
@@ -115,7 +116,8 @@ export default function AboutPage() {
           padding: "1rem",
           background: "var(--bg2)",
           border: "1px solid var(--b1)",
-          borderRadius: "8px",
+          borderRadius: "12px",
+          boxShadow: "var(--shadow-sm)",
           fontSize: "0.8125rem",
           fontFamily: "var(--font-geist-mono), monospace",
           color: "var(--t2)",
