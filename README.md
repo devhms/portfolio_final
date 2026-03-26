@@ -59,6 +59,11 @@ Update the following files with your latest info before final deployment:
 - `lib/projects.ts` (Project descriptions and links)
 - `public/og-image.png` (Custom branding)
 
+## ── Documentation
+
+For a comprehensive architectural deep-dive and absolute source of truth, see:
+[**REFERENCE.md**](file:///c:/Users/hafiz/Downloads/portfolio/portfolio/REFERENCE.md)
+
 ## ── License
 MIT © Ibrahim Salman
  
