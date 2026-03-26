@@ -24,7 +24,7 @@ export default function BreadcrumbNav() {
               style={{
                 color: "var(--t3)",
                 fontSize: "0.75rem",
-                fontFamily: "var(--font-geist-mono), monospace",
+                fontFamily: "var(--font-space-grotesk), sans-serif",
               }}
             >
               /
@@ -34,7 +34,7 @@ export default function BreadcrumbNav() {
             href={crumb.href}
             style={{
               fontSize: "0.8125rem",
-              fontFamily: "var(--font-geist-mono), monospace",
+              fontFamily: "var(--font-space-grotesk), sans-serif",
               color: i === crumbs.length - 1 ? "var(--acc)" : "var(--t2)",
               textDecoration: "none",
               transition: "color 0.15s",

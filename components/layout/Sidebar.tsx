@@ -49,9 +49,9 @@ function NavLink({
         borderRadius: "6px",
         fontSize: "0.8125rem",
         fontFamily: "var(--font-geist-mono), monospace",
-        color: active ? "var(--t1)" : "var(--t2)",
-        background: active ? "var(--bg3)" : "transparent",
-        borderLeft: active ? "2px solid var(--acc)" : "2px solid transparent",
+        color: active ? "var(--color-primary)" : "var(--t2)",
+        background: active ? "var(--acc-bg)" : "transparent",
+        borderLeft: active ? "3px solid var(--color-primary)" : "3px solid transparent",
         textDecoration: "none",
         transition: "all 0.15s ease",
         marginBottom: "2px",
@@ -137,10 +137,10 @@ export default function Sidebar() {
             <div className="sidebar-title">
               <div
                 style={{
-                  fontSize: "0.8125rem",
+                  fontSize: "0.875rem",
                   fontWeight: 600,
                   color: "var(--t1)",
-                  fontFamily: "var(--font-geist-mono), monospace",
+                  fontFamily: "var(--font-archivo), sans-serif",
                   lineHeight: 1.2,
                 }}
               >

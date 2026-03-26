@@ -306,6 +306,11 @@ export default function TerminalEmulator() {
   const konamiBuf = useRef<string[]>([]);
   const historyIdxRef = useRef(-1);
 
+  // Layer 3: Touch-Delta Discriminator Refs
+  const touchStartRef = useRef<{ y: number; time: number } | null>(null);
+  // Layer 4: rAF Ref
+  const rafRef = useRef<number>(0);
+
   const { displayed: welcomeLines, done: welcomeDone } =
     useTypewriter(WELCOME_LINES);
   const sysInfo = useSysInfo();
@@ -340,9 +345,49 @@ export default function TerminalEmulator() {
   }, [state.history]);
 
   // ── Auto-scroll ───────────────────────────────────────────────────────────
+  // Layer 8: overflow-anchor is set in CSS, but we keep this for manual output appends
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [state.lines, welcomeLines]);
+
+  // Layer 4: rAF-Debounced visualViewport Auto-Scroll
+  useEffect(() => {
+    const vv = typeof window !== "undefined" ? window.visualViewport : null;
+    if (!vv) return;
+
+    const onVVResize = () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(() => {
+        bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    };
+
+    vv.addEventListener("resize", onVVResize);
+    return () => {
+      vv.removeEventListener("resize", onVVResize);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
+
+  // Layer 5: iOS 26 Liquid Glass offsetReset Nudge
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+
+    const onFocusOut = () => {
+      // Small delay to allow keyboard dismissal animation
+      setTimeout(() => {
+        const vv = window.visualViewport;
+        if (vv && vv.offsetTop > 0) {
+          window.scrollBy(0, -1);
+          window.scrollBy(0, 1);
+        }
+      }, 100);
+    };
+
+    input.addEventListener("focusout", onFocusOut);
+    return () => input.removeEventListener("focusout", onFocusOut);
+  }, []);
 
   // ── Konami Code ───────────────────────────────────────────────────────────
   const KONAMI = [
@@ -562,9 +607,11 @@ export default function TerminalEmulator() {
               { text: "  Ctrl+L ", color: "var(--term-amber)" },
               { text: "clear · ", color: "var(--term-t3)" },
               { text: "Ctrl+C ", color: "var(--term-amber)" },
-              { text: "cancel · ", color: "var(--term-t3)" },
-              { text: "Ctrl+R ", color: "var(--term-amber)" },
-              { text: "history search · ", color: "var(--term-t3)" },
+              { text: "cancel", color: "var(--term-t3)" },
+            ],
+            [
+              { text: "  Ctrl+R ", color: "var(--term-amber)" },
+              { text: "search · ", color: "var(--term-t3)" },
               { text: "Tab ", color: "var(--term-amber)" },
               { text: "autocomplete", color: "var(--term-t3)" },
             ],
@@ -961,12 +1008,40 @@ export default function TerminalEmulator() {
     }
   };
 
-  // Cleanup typing timer
-  useEffect(() => {
-    return () => {
-      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+  // ══════════════════════════════════════════════════════════════════════════
+  //  TOUCH HANDLERS (Layer 3)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  const SWIPE_THRESHOLD_PX = 8;
+  const SWIPE_DURATION_MS = 250;
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartRef.current = {
+      y: e.touches[0].clientY,
+      time: Date.now(),
     };
-  }, []);
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (!touchStartRef.current) return;
+    const { y, time } = touchStartRef.current;
+    const isTap =
+      Math.abs(e.changedTouches[0].clientY - y) < SWIPE_THRESHOLD_PX &&
+      Date.now() - time < SWIPE_DURATION_MS;
+
+    if (isTap) {
+      e.preventDefault(); // Kills ghost-click
+      inputRef.current?.focus();
+    }
+  };
+
+  const handleContainerClick = () => {
+    // Only focus via click on Desktop (fine pointer)
+    // Touch devices use the handleTouchEnd discriminator
+    if (window.matchMedia("(pointer: fine)").matches) {
+      inputRef.current?.focus();
+    }
+  };
 
   const ghost = ghostSuggestion(inputVal);
 
@@ -979,16 +1054,17 @@ export default function TerminalEmulator() {
       {/* ── Global styles ─────────────────────────────────────────────────── */}
       <style>{`
         :root {
-          --term-bg:     #0d1117;
-          --term-bg2:    #161b22;
-          --term-border: #30363d;
-          --term-t1:     #e6edf3;
-          --term-t2:     #8b949e;
-          --term-t3:     #484f58;
-          --term-acc:    #58a6ff;
-          --term-green:  #3fb950;
-          --term-amber:  #d29922;
-          --term-red:    #f85149;
+          --term-bg:     var(--bg);
+          --term-bg2:    var(--bg2);
+          --term-border: var(--b1);
+          --term-t1:     var(--t1);
+          --term-t2:     var(--t2);
+          --term-t3:     var(--t3);
+          --term-acc:    var(--color-primary);
+          --term-green:  var(--green);
+          --term-amber:  var(--amber);
+          --term-red:    var(--red);
+          --term-cta:    var(--color-cta);
         }
 
         @keyframes blink {
@@ -1013,10 +1089,29 @@ export default function TerminalEmulator() {
           margin: 0 auto;
           display: flex;
           flex-direction: column;
-          height: 520px;
-          user-select: text;
+
+          /* Layer 1: DVH fallback and override */
+          height: calc(100vh - 12rem);
+          height: calc(100dvh - 12rem) !important;
+          min-height: 350px;
+          max-height: 520px;
+
+          /* Layer 6: Touch Suppression Matrix */
+          touch-action: pan-y;
+          -webkit-tap-highlight-color: transparent;
+          overscroll-behavior: contain;
+          -webkit-overflow-scrolling: touch;
+          -webkit-user-select: none;
+          user-select: none;
+
           direction: ltr !important;
           text-align: left !important;
+        }
+
+        /* Layer 6: Re-enable text selection on output lines */
+        .term-line-output {
+          -webkit-user-select: text;
+          user-select: text;
         }
 
         /* Chrome / title bar */
@@ -1081,7 +1176,7 @@ export default function TerminalEmulator() {
           display: inline-block;
           width: 0.55em;
           height: 1.05em;
-          background: var(--term-acc);
+          background: var(--term-cta);
           vertical-align: text-bottom;
           margin-left: 1px;
         }
@@ -1090,9 +1185,12 @@ export default function TerminalEmulator() {
       {/* ── Terminal window ────────────────────────────────────────────────── */}
       <div
         className="term-root"
-        onClick={() => inputRef.current?.focus()}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        onClick={handleContainerClick}
         role="application"
         aria-label="Terminal emulator"
+        style={{ overflowAnchor: "auto" }} /* Layer 8 */
       >
         {/* Chrome bar */}
         <div className="term-chrome">
@@ -1129,7 +1227,9 @@ export default function TerminalEmulator() {
           {/* Output lines */}
           {welcomeDone &&
             state.lines.map((line) => (
-              <OutputRow key={line.id} line={line} />
+              <div key={line.id} className="term-line-output">
+                <OutputRow line={line} />
+              </div>
             ))}
 
           {/* Scroll anchor */}
@@ -1200,7 +1300,7 @@ export default function TerminalEmulator() {
               </>
             )}
 
-            {/* Hidden real input */}
+            {/* Layer 2: Hidden real input configuration */}
             <input
               ref={inputRef}
               value={searchMode ? searchQuery : inputVal}
@@ -1208,8 +1308,11 @@ export default function TerminalEmulator() {
               onKeyDown={handleKeyDown}
               autoComplete="off"
               autoCorrect="off"
-              autoCapitalize="off"
+              autoCapitalize="none"
               spellCheck={false}
+              inputMode="text"
+              tabIndex={-1}
+              aria-hidden="true"
               aria-label="Terminal input"
               style={{
                 position: "absolute",
@@ -1218,6 +1321,7 @@ export default function TerminalEmulator() {
                 height: 0,
                 pointerEvents: "none",
                 fontSize: "16px",
+                transform: "scale(0)",
                 direction: "ltr",
                 textAlign: "left",
               }}
@@ -1225,10 +1329,11 @@ export default function TerminalEmulator() {
           </div>
         )}
 
-        {/* ARIA live region (screen-reader only) */}
+        {/* Layer 7: ARIA live region (screen-reader only) */}
         <div
-          aria-live="polite"
-          aria-atomic="false"
+          aria-live="assertive"
+          aria-atomic="true"
+          aria-label="Terminal output"
           style={{
             position: "absolute",
             width: "1px",

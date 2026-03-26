@@ -2,44 +2,48 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ─── COLOR SYSTEM ─────────────────────────────────────────────────── */
+/* ─── COLOR SYSTEM (Pro Max) ────────────────────────────────────────── */
 :root {
-  --bg:       #151412;
-  --bg2:      #1c1a17;
-  --bg3:      #242018;
-  --bg4:      #2e2a22;
-  --b1:       #3a3530;
-  --b2:       #524d46;
-  --t1:       #f0ece4;
-  --t2:       #a09488;
-  --t3:       #5a5248;
-  --acc:      #e8a020;
-  --acc-bg:   rgba(232, 160, 32, 0.1);
-  --acc-b:    rgba(232, 160, 32, 0.3);
-  --green:    #6abf69;
-  --green-bg: rgba(106, 191, 105, 0.1);
-  --green-b:  rgba(106, 191, 105, 0.3);
-  --amber:    #d4914a;
-  --amber-bg: rgba(212, 145, 74, 0.1);
-  --red:      #d4614a;
+  --color-primary:    #2563EB;
+  --color-secondary:  #3B82F6;
+  --color-cta:        #F97316;
+  --color-background: #000000; /* OLED Black */
+  --color-text:       #F8FAFC;
+  
+  --bg:       var(--color-background);
+  --bg2:      #0A0A0A;
+  --bg3:      #111111;
+  --bg4:      #1A1A1A;
+  --b1:       #262626;
+  --b2:       #404040;
+  --t1:       var(--color-text);
+  --t2:       #94A3B8;
+  --t3:       #475569;
+  --acc:      var(--color-cta);
+  --acc-bg:   rgba(249, 115, 22, 0.1);
+  --acc-b:    rgba(249, 115, 22, 0.3);
+  --green:    #22C55E;
+  --green-bg: rgba(34, 197, 94, 0.1);
+  --green-b:  rgba(34, 197, 94, 0.3);
+  --amber:    #EAB308;
+  --red:      #EF4444;
 }
 
 [data-theme="light"] {
-  --bg:  #faf8f3;
-  --bg2: #ffffff;
-  --bg3: #f2ede4;
-  --bg4: #e8e0d4;
-  --b1:  #e0d8cc;
-  --b2:  #ccc0b0;
-  --t1:  #1a1814;
-  --t2:  #6b6055;
-  --t3:  #a09488;
-  --acc: #b87010;
-  --acc-bg:  rgba(184, 112, 16, 0.1);
-  --acc-b:   rgba(184, 112, 16, 0.3);
-  --green:    #3d8b3c;
-  --green-bg: rgba(61, 139, 60, 0.1);
-  --green-b:  rgba(61, 139, 60, 0.3);
+  --color-background: #F8FAFC;
+  --color-text: #1E293B;
+  --bg:  var(--color-background);
+  --bg2: #FFFFFF;
+  --bg3: #F1F5F9;
+  --bg4: #E2E8F0;
+  --b1:  #CBD5E1;
+  --b2:  #94A3B8;
+  --t1:  var(--color-text);
+  --t2:  #475569;
+  --t3:  #94A3B8;
+  --acc: #2563EB;
+  --acc-bg: rgba(37, 99, 235, 0.1);
+  --acc-b:  rgba(37, 99, 235, 0.3);
 }
 
 /* ─── BASE ──────────────────────────────────────────────────────────── */
@@ -50,11 +54,15 @@ html { scroll-behavior: smooth; }
 body {
   background: var(--bg);
   color: var(--t1);
-  font-family: var(--font-geist-mono), monospace;
+  font-family: var(--font-space-grotesk), sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
   max-width: 100vw;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-archivo), sans-serif;
 }
 
 html {

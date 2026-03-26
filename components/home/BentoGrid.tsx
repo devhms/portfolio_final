@@ -14,16 +14,17 @@ function BentoCard({
   const style = {
     background: "var(--bg2)",
     border: "1px solid var(--b1)",
-    borderRadius: "10px",
-    padding: "1.25rem",
+    borderRadius: "12px",
+    padding: "1.5rem",
     display: "flex",
     flexDirection: "column" as const,
-    gap: "0.75rem",
-    transition: "border-color 0.2s, background 0.2s",
+    gap: "1rem",
+    transition: "all 200ms ease",
     textDecoration: "none",
     color: "inherit",
-    minHeight: 120,
+    minHeight: 140,
     overflow: "hidden" as const,
+    boxShadow: "var(--shadow-sm)",
   };
 
   if (href) {
@@ -53,8 +54,8 @@ export default function BentoGrid() {
             <h3
               className="bento-title"
               style={{
-                fontSize: "0.9375rem",
-                fontFamily: "var(--font-geist-mono), monospace",
+                fontSize: "1rem",
+                fontFamily: "var(--font-archivo), sans-serif",
                 fontWeight: 600,
                 color: "var(--t1)",
                 margin: 0,
@@ -67,7 +68,7 @@ export default function BentoGrid() {
           <p
             className="bento-desc"
             style={{
-              fontSize: "0.8125rem",
+              fontSize: "0.875rem",
               color: "var(--t2)",
               lineHeight: 1.6,
               margin: 0,
@@ -118,8 +119,8 @@ export default function BentoGrid() {
         </div>
         <div
           style={{
-            fontFamily: "var(--font-geist-mono), monospace",
-            fontSize: "0.8125rem",
+            fontFamily: "var(--font-space-grotesk), sans-serif",
+            fontSize: "0.875rem",
             color: "var(--t2)",
             lineHeight: 1.7,
           }}

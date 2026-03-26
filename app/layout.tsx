@@ -1,6 +1,14 @@
 import type { Metadata, Viewport } from "next";
-import { GeistSans } from "geist/font/sans";
-import { GeistMono } from "geist/font/mono";
+import { Archivo, Space_Grotesk } from "next/font/google";
+const archivo = Archivo({
+  subsets: ["latin"],
+  variable: "--font-archivo",
+});
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  variable: "--font-space-grotesk",
+});
 import { Analytics } from "@vercel/analytics/react";
 import Providers from "@/components/providers/Providers";
 import Sidebar from "@/components/layout/Sidebar";
@@ -12,16 +20,15 @@ import "./globals.css";
 export const metadata: Metadata = siteMetadata;
 
 export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  maximumScale: 5,
-  userScalable: true,
-  interactiveWidget: "resizes-content",
+  width:             "device-width",
+  initialScale:      1,
+  maximumScale:      1,              // iOS zoom prevention (WCAG-safe)
+  interactiveWidget: "resizes-content", // Chrome Android shrink-to-fit
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning className={`${GeistSans.variable} ${GeistMono.variable}`}>
+    <html lang="en" suppressHydrationWarning className={`${archivo.variable} ${spaceGrotesk.variable}`}>
       <body className="overflow-x-hidden">
         <Providers>
           <div className="grain" aria-hidden="true" />
