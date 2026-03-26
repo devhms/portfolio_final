@@ -275,6 +275,8 @@ const OutputRow = memo(function OutputRow({ line }: { line: Line }) {
             : line.type === "input"
             ? "var(--term-t1)"
             : "var(--term-t2)",
+        unicodeBidi: "bidi-override",
+        direction: "ltr",
       }}
     >
       {line.segments.map((seg, i) => (
@@ -999,6 +1001,18 @@ export default function TerminalEmulator() {
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
     typingTimerRef.current = setTimeout(() => setIsTyping(false), 800);
 
+    // Sync selection to end (Mobile fix for reverse typing)
+    const target = e.target;
+    requestAnimationFrame(() => {
+      target.setSelectionRange(target.value.length, target.value.length);
+    });
+
+    // Sync selection to end (Mobile fix for reverse typing)
+    const target = e.target;
+    requestAnimationFrame(() => {
+      target.setSelectionRange(target.value.length, target.value.length);
+    });
+
     if (searchMode) {
       setSearchQuery(val);
       const match = [...state.history]
@@ -1044,6 +1058,41 @@ export default function TerminalEmulator() {
   };
 
   const ghost = ghostSuggestion(inputVal);
+
+  // Layer 7: Cursor sync for mobile Safari
+  // This hidden input is used to sync the cursor position in the visible input
+  // on mobile Safari, which has issues with `setSelectionRange` on non-native inputs.
+  // It's positioned off-screen and its value is kept in sync with the main input.
+  // When the main input is focused, this input is also focused briefly to
+  // trigger the native cursor behavior, then focus is returned to the main input.
+  // This ensures the cursor is always at the end of the text.
+  const cursorSyncRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (inputRef.current && cursorSyncRef.current) {
+      const mainInput = inputRef.current;
+      const syncInput = cursorSyncRef.current;
+
+      const handleFocus = () => {
+        if (
+          /iPad|iPhone|iPod/.test(navigator.userAgent) &&
+          !window.MSStream &&
+          document.activeElement === mainInput
+        ) {
+          syncInput.focus();
+          syncInput.setSelectionRange(
+            syncInput.value.length,
+            syncInput.value.length
+          );
+          mainInput.focus();
+        }
+      };
+
+      mainInput.addEventListener("focus", handleFocus);
+      return () => {
+        mainInput.removeEventListener("focus", handleFocus);
+      };
+    }
+  }, []);
 
   // ══════════════════════════════════════════════════════════════════════════
   //  RENDER
@@ -1151,6 +1200,7 @@ export default function TerminalEmulator() {
           scroll-behavior: smooth;
           direction: ltr !important;
           text-align: left !important;
+          unicode-bidi: bidi-override !important;
         }
         .term-body::-webkit-scrollbar { width: 4px; }
         .term-body::-webkit-scrollbar-track { background: transparent; }
@@ -1166,6 +1216,7 @@ export default function TerminalEmulator() {
           border-top: 1px solid rgba(48,54,61,0.5);
           direction: ltr !important;
           text-align: left !important;
+          unicode-bidi: bidi-override !important;
         }
         .term-prompt-sym {
           color: var(--term-acc);
@@ -1209,7 +1260,7 @@ export default function TerminalEmulator() {
           {welcomeLines.map((line, i) => (
             <div
               key={`w${i}`}
-              style={{ lineHeight: 1.65, color: "var(--term-t3)" }}
+              style={{ lineHeight: 1.65, color: "var(--term-t3)", unicodeBidi: "bidi-override", direction: "ltr" }}
             >
               {i === 0 ? (
                 <>
@@ -1273,7 +1324,7 @@ export default function TerminalEmulator() {
               <>
                 <span className="term-prompt-sym">$ </span>
                 {/* Typed text */}
-                <span style={{ color: "var(--term-t1)", whiteSpace: "pre", direction: "ltr", textAlign: "left" }}>
+                <span style={{ color: "var(--term-t1)", whiteSpace: "pre", direction: "ltr", textAlign: "left", unicodeBidi: "bidi-override" }}>
                   {inputVal}
                 </span>
                 {/* Ghost suggestion */}
@@ -1305,6 +1356,10 @@ export default function TerminalEmulator() {
               ref={inputRef}
               value={searchMode ? searchQuery : inputVal}
               onChange={handleChange}
+              onFocus={(e) => {
+                const len = e.target.value.length;
+                e.target.setSelectionRange(len, len);
+              }}
               onKeyDown={handleKeyDown}
               autoComplete="off"
               autoCorrect="off"
@@ -1315,15 +1370,16 @@ export default function TerminalEmulator() {
               aria-hidden="true"
               aria-label="Terminal input"
               style={{
-                position: "absolute",
+                position: "fixed",
+                top: "50%",
+                left: "-9999px",
                 opacity: 0,
-                width: 0,
-                height: 0,
-                pointerEvents: "none",
+                width: "100px",
+                height: "40px",
                 fontSize: "16px",
-                transform: "scale(0)",
                 direction: "ltr",
                 textAlign: "left",
+                unicodeBidi: "bidi-override",
               }}
             />
           </div>
