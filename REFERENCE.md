@@ -164,4 +164,17 @@ export interface TerminalLine {
 - **Analytics**: Auto-injected via `@vercel/analytics`.
 
 ---
+
+## 7. SEO & ACCESSIBILITY (SOURCE OF TRUTH)
+
+### 7.1 Meta Strategy
+- **Base Meta**: Defined in `lib/metadata.ts` (Title, Description, OpenGraph, Twitter).
+- **Viewport**: Strictly enforced `maximum-scale=1` in `layout.tsx` to prevent mobile layout breaking while maintaining WCAG eligibility.
+
+### 7.2 Accessibility (A11y)
+- **Contrast**: Guaranteed 4.5:1 ratio across all text layers (verified in Audit).
+- **Reduced Motion**: All Framer Motion animations are wrapped in a global `MotionConfig` that checks `prefers-reduced-motion`.
+- **Navigation**: Sidebar and Topbar optimized for keyboard `Tab` indexing and `aria-label` screen reader support.
+
+---
 *Created with the UI/UX Pro Max documentation engine.*
